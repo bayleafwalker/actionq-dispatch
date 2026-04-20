@@ -1,0 +1,6 @@
+[Unit]
+Description=actionq claim sweep
+
+[Service]
+Type=oneshot
+ExecStart=actionctl sweep

@@ -1,0 +1,13 @@
+[Unit]
+Description=actionq dispatcher loop
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=DISPATCHER_CONFIG=%h/.config/actionq-dispatcher/config.toml
+ExecStart=/bin/sh -c 'while true; do dispatcher-once; sleep 30; done'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

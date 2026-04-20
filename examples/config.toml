@@ -1,0 +1,26 @@
+[global]
+poll_interval_seconds = 30
+default_timeout_minutes = 30
+event_jsonl_path = "~/.local/state/actionq-dispatcher/events.jsonl"
+budget_daily_usd = 20.0
+budget_window_hours = 24
+worktree_root = "~/.local/state/actionq-dispatcher/worktrees"
+pause_file = "~/.local/state/actionq-dispatcher/PAUSED"
+actionctl_bin = "actionctl"
+claude_bin = "claude"
+
+[projects.sprintctl]
+path = "/projects/dev/sprintctl"
+base_ref = "HEAD"
+
+[actions.scope-iterate]
+model = "claude-sonnet-4-6"
+runner = "local"
+prompt_template = "/projects/dev/actionq-dispatcher/prompts/scope-iterate.md"
+working_dir = "{worktree_root}/{project}/{action.id}"
+tool_acl = "/projects/dev/actionq-dispatcher/acls/scope-iterate.json"
+timeout_minutes = 45
+max_cost_usd = 2.0
+test_command = "pytest"
+pre_gates = ["budget", "project-exists", "sprint-item-exists", "sprint-item-ready", "branch-absent"]
+post_gates = ["branch-exists", "branch-ahead-of-base", "diff-nonempty", "worktree-clean", "diff-scope-respected", "tests-pass"]

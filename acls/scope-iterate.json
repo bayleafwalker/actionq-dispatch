@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "allowed_tools": ["read", "edit", "grep", "bash"],
+  "path_allowlist": [
+    "{working_dir}/**"
+  ],
+  "path_denylist": [
+    "{working_dir}/.git/**",
+    "{working_dir}/.sprintctl/**",
+    "{working_dir}/secrets/**",
+    "{working_dir}/**/.env",
+    "{working_dir}/**/.env.*"
+  ],
+  "bash_allowlist": [
+    "git status",
+    "git diff",
+    "git add",
+    "git commit",
+    "pytest",
+    "python",
+    "python3",
+    "uv run",
+    "ruff"
+  ],
+  "bash_denylist": [
+    "git push",
+    "git merge",
+    "git reset",
+    "ssh",
+    "scp",
+    "curl",
+    "wget",
+    "rm",
+    "kubectl",
+    "flux",
+    "talosctl"
+  ],
+  "network": "none"
+}
