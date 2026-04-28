@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Protocol
 
-from .acl import load_acl, validate_changed_paths
+from .acl import ACL, load_acl, validate_changed_paths
 from .clients import ActionctlClient, ClientError, SprintctlClient
 from .commands import CommandRunner, git_safe_env
 from .config import ActionConfig, DispatcherConfig, ProjectConfig
@@ -19,6 +19,13 @@ from .worker import ConfiguredWorker, WorkerError
 
 class CoordinatorError(RuntimeError):
     pass
+
+
+class _ActionSettled(Exception):
+    """Raised by ScopeIterateHandler.prepare() when the action was settled early."""
+
+    def __init__(self, outcome: str) -> None:
+        self.outcome = outcome
 
 
 class ActionctlLike(Protocol):
@@ -45,7 +52,16 @@ class ActionctlLike(Protocol):
 
 class SprintctlLike(Protocol):
     def item_show(self, item_id: int) -> dict: ...
-    def claim_start(self, *, item_id: int, actor: str, ttl_seconds: int, branch: str, worktree: Path) -> dict: ...
+    def claim_start(
+        self,
+        *,
+        item_id: int,
+        actor: str,
+        ttl_seconds: int,
+        branch: str,
+        worktree: Path,
+        runtime_session_id: str | None = None,
+    ) -> dict: ...
     def done_from_claim(self, *, item_id: int, claim_id: int, claim_token: str, actor: str) -> dict: ...
     def block_with_claim(self, *, item_id: int, claim_id: int, claim_token: str, actor: str) -> dict: ...
     def release_claim(self, *, claim_id: int, claim_token: str, actor: str) -> None: ...
@@ -54,6 +70,24 @@ class SprintctlLike(Protocol):
 
 class WorkerLike(Protocol):
     def invoke(self, *, action_config: ActionConfig, worktree: Path, prompt: str, acl) -> object: ...
+
+
+@dataclass
+class PreparedSession:
+    """Context produced by ScopeIterateHandler.prepare(); consumed by settle()."""
+
+    action_id: int
+    project: ProjectConfig
+    sprintctl: SprintctlLike
+    item_id: int
+    item_bundle: dict
+    claim_id: int
+    claim_token: str
+    worktree: Path
+    branch: str
+    base_sha: str
+    acl: ACL
+    prompt: str
 
 
 @dataclass
@@ -200,7 +234,7 @@ class ScopeIterateHandler:
         config: DispatcherConfig,
         runner: CommandRunner,
         sprintctl_factory: Callable[[ProjectConfig], SprintctlLike],
-        worker: WorkerLike,
+        worker: WorkerLike | None,
         actionctl: ActionctlLike,
         actor: str,
     ):
@@ -212,43 +246,87 @@ class ScopeIterateHandler:
         self.actor = actor
         self.cost_usd = 0.0
 
-    def handle(self, action: dict, action_config: ActionConfig) -> str:
+    def prepare(
+        self,
+        action: dict,
+        action_config: ActionConfig,
+        *,
+        runtime_session_id: str | None = None,
+    ) -> PreparedSession:
+        """Run pre-gates, worktree setup, sprint claim, ACL, and prompt.
+
+        Raises _ActionSettled if the action was rejected/failed before workerstart.
+        Raises CoordinatorError on fatal coordinator failures.
+        """
         action_id = int(action["id"])
+
         if "budget" in action_config.pre_gates:
             allowed, reason = self._budget_allows(action_config)
             if not allowed:
-                return self._reject(action_id, "budget", reason)
+                self.actionctl.reject(action_id, reason, "budget", self.actor)
+                raise _ActionSettled("rejected")
 
         project_name = action.get("project")
         if not project_name or project_name not in self.config.projects:
-            return self._reject(action_id, "project-exists", f"Unknown project: {project_name}")
+            self.actionctl.reject(
+                action_id,
+                f"Unknown project: {project_name}",
+                "project-exists",
+                self.actor,
+            )
+            raise _ActionSettled("rejected")
 
         project = self.config.projects[project_name]
         target_ref = action.get("target_ref")
         try:
             item_id = int(target_ref)
         except (TypeError, ValueError):
-            return self._reject(action_id, "sprint-item-exists", "target_ref must be a sprintctl item id")
+            self.actionctl.reject(
+                action_id,
+                "target_ref must be a sprintctl item id",
+                "sprint-item-exists",
+                self.actor,
+            )
+            raise _ActionSettled("rejected")
 
         sprintctl = self.sprintctl_factory(project)
         try:
             item_bundle = sprintctl.item_show(item_id)
         except ClientError as exc:
-            return self._reject(action_id, "sprint-item-exists", str(exc))
+            self.actionctl.reject(action_id, str(exc), "sprint-item-exists", self.actor)
+            raise _ActionSettled("rejected")
+
         ready, reason = self._sprint_item_ready(item_bundle)
         if not ready:
-            return self._reject(action_id, "sprint-item-ready", reason)
+            self.actionctl.reject(action_id, reason, "sprint-item-ready", self.actor)
+            raise _ActionSettled("rejected")
 
         branch = f"agent/scope-iterate/{action_id}"
         if self._branch_exists(project.path, branch):
-            return self._reject(action_id, "branch-absent", f"Branch already exists: {branch}")
+            self.actionctl.reject(
+                action_id,
+                f"Branch already exists: {branch}",
+                "branch-absent",
+                self.actor,
+            )
+            raise _ActionSettled("rejected")
 
         base_sha = self._git(project.path, ["rev-parse", project.base_ref]).strip()
         worktree = self._worktree_path(project_name, action_id)
         if worktree.exists() and any(worktree.iterdir()):
-            return self._reject(action_id, "worktree-empty", f"Worktree already exists: {worktree}")
+            self.actionctl.reject(
+                action_id,
+                f"Worktree already exists: {worktree}",
+                "worktree-empty",
+                self.actor,
+            )
+            raise _ActionSettled("rejected")
         worktree.parent.mkdir(parents=True, exist_ok=True)
         self._git(project.path, ["worktree", "add", "-b", branch, str(worktree), base_sha])
+        # The worktrees-smoke path lives under ~/.local/state which has 770 perms on this
+        # cluster filesystem. Without this, git sees every checked-out file as mode-changed
+        # (100644 committed → 100755 on disk), which causes worktree-clean post-gate failures.
+        self._git(worktree, ["config", "core.fileMode", "false"])
 
         ttl_seconds = (action_config.timeout_minutes + 10) * 60
         claim = sprintctl.claim_start(
@@ -257,6 +335,7 @@ class ScopeIterateHandler:
             ttl_seconds=ttl_seconds,
             branch=branch,
             worktree=worktree,
+            runtime_session_id=runtime_session_id,
         )
         claim_id = int(claim.get("claim_id") or claim.get("claim", {}).get("claim_id"))
         claim_token = claim.get("claim_token") or claim.get("claim", {}).get("claim_token")
@@ -278,54 +357,97 @@ class ScopeIterateHandler:
             acl=acl,
         )
 
-        try:
-            self.cost_usd = action_config.max_cost_usd
-            self.worker.invoke(
-                action_config=action_config,
-                worktree=worktree,
-                prompt=prompt,
-                acl=acl,
-            )
-        except WorkerError as exc:
+        return PreparedSession(
+            action_id=action_id,
+            project=project,
+            sprintctl=sprintctl,
+            item_id=item_id,
+            item_bundle=item_bundle,
+            claim_id=claim_id,
+            claim_token=claim_token,
+            worktree=worktree,
+            branch=branch,
+            base_sha=base_sha,
+            acl=acl,
+            prompt=prompt,
+        )
+
+    def settle(
+        self,
+        prepared: PreparedSession,
+        action_config: ActionConfig,
+        *,
+        exit_code: int,
+    ) -> str:
+        """Post-validate and settle a completed action. Returns outcome string."""
+        if exit_code != 0:
             return self._fail_after_claim(
-                action_id,
-                item_bundle,
-                sprintctl,
-                item_id,
-                claim_id,
-                claim_token,
-                f"worker failed: {exc}",
+                prepared.action_id,
+                prepared.item_bundle,
+                prepared.sprintctl,
+                prepared.item_id,
+                prepared.claim_id,
+                prepared.claim_token,
+                f"harness exited with code {exit_code}",
             )
 
         passed, validator, reason = self._post_validate(
-            worktree=worktree,
-            base_sha=base_sha,
-            branch=branch,
-            acl=acl,
+            worktree=prepared.worktree,
+            base_sha=prepared.base_sha,
+            branch=prepared.branch,
+            acl=prepared.acl,
             action_config=action_config,
         )
         if not passed:
             return self._reject_after_claim(
-                action_id,
+                prepared.action_id,
                 validator,
                 reason,
-                item_bundle,
-                sprintctl,
-                item_id,
-                claim_id,
-                claim_token,
+                prepared.item_bundle,
+                prepared.sprintctl,
+                prepared.item_id,
+                prepared.claim_id,
+                prepared.claim_token,
             )
 
-        sprintctl.done_from_claim(
-            item_id=item_id,
-            claim_id=claim_id,
-            claim_token=claim_token,
-            actor=f"dispatcher:actionq:{action_id}",
+        prepared.sprintctl.done_from_claim(
+            item_id=prepared.item_id,
+            claim_id=prepared.claim_id,
+            claim_token=prepared.claim_token,
+            actor=f"dispatcher:actionq:{prepared.action_id}",
         )
-        head_sha = self._git(worktree, ["rev-parse", "HEAD"]).strip()
-        result_ref = f"branch={branch} worktree={worktree} commit={head_sha}"
-        self.actionctl.complete(action_id, result_ref, self.actor)
+        head_sha = self._git(prepared.worktree, ["rev-parse", "HEAD"]).strip()
+        result_ref = f"branch={prepared.branch} worktree={prepared.worktree} commit={head_sha}"
+        self.actionctl.complete(prepared.action_id, result_ref, self.actor)
         return "completed"
+
+    def handle(self, action: dict, action_config: ActionConfig) -> str:
+        """Synchronous one-shot dispatch. Used by dispatcher-once."""
+        try:
+            prepared = self.prepare(action, action_config)
+        except _ActionSettled as e:
+            return e.outcome
+
+        try:
+            self.cost_usd = action_config.max_cost_usd
+            self.worker.invoke(
+                action_config=action_config,
+                worktree=prepared.worktree,
+                prompt=prepared.prompt,
+                acl=prepared.acl,
+            )
+        except WorkerError as exc:
+            return self._fail_after_claim(
+                prepared.action_id,
+                prepared.item_bundle,
+                prepared.sprintctl,
+                prepared.item_id,
+                prepared.claim_id,
+                prepared.claim_token,
+                f"worker failed: {exc}",
+            )
+
+        return self.settle(prepared, action_config, exit_code=0)
 
     def _worktree_path(self, project_name: str, action_id: int) -> Path:
         return self.config.global_config.worktree_root / project_name / str(action_id)
