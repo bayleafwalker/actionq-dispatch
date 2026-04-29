@@ -2,16 +2,33 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 
 DEFAULT_CONFIG = "~/.config/actionq-dispatcher/config.toml"
+DAEMON_CONFIG = "~/.config/actionq/config.toml"
 
 
 class ConfigError(ValueError):
     pass
+
+
+@dataclass
+class SprintctlTakeupConfig:
+    enabled: bool = False
+    remote_only: bool = True
+    actor_prefix: str = "actionq"
+    release_on_sprintctl_error: bool = False
+
+
+@dataclass
+class HarnessConfig:
+    name: str
+    bin: str
+    kind: str
+    default_model: str
 
 
 @dataclass
@@ -26,6 +43,14 @@ class GlobalConfig:
     actionctl_bin: str
     claude_bin: str
     worker_env: dict[str, str] | None = None
+    heartbeat_interval_seconds: int = 60
+    graceful_shutdown_seconds: int = 30
+    session_state_path: Path | None = None
+    audit_enabled: bool = True
+    fail_action_on_emit_error: bool = False
+    sprintctl_takeup: SprintctlTakeupConfig = field(
+        default_factory=SprintctlTakeupConfig
+    )
 
 
 @dataclass
@@ -34,6 +59,8 @@ class ProjectConfig:
     path: Path
     base_ref: str = "HEAD"
     env: dict[str, str] | None = None
+    default_harness: str | None = None
+    default_model: str | None = None
 
 
 @dataclass
@@ -50,6 +77,7 @@ class ActionConfig:
     pre_gates: list[str]
     post_gates: list[str]
     fake_commit_path: str = "docs/actionq-dispatch-smoke.md"
+    default_harness: str | None = None
 
 
 @dataclass
@@ -58,6 +86,7 @@ class DispatcherConfig:
     global_config: GlobalConfig
     projects: dict[str, ProjectConfig]
     actions: dict[str, ActionConfig]
+    harnesses: dict[str, HarnessConfig] = field(default_factory=dict)
 
 
 def _expand_path(raw: str, *, base: Path | None = None) -> Path:
@@ -74,11 +103,14 @@ def _required(mapping: dict[str, Any], key: str, where: str) -> Any:
 
 
 def load_config(path: str | Path | None = None) -> DispatcherConfig:
-    config_path = Path(
-        os.path.expanduser(
-            str(path or os.environ.get("DISPATCHER_CONFIG", DEFAULT_CONFIG))
-        )
-    )
+    explicit = path or os.environ.get("DISPATCHER_CONFIG") or os.environ.get("ACTIONQ_CONFIG")
+    if explicit:
+        config_path = Path(os.path.expanduser(str(explicit)))
+    else:
+        # Check legacy dispatcher path first, then new actionq path.
+        legacy = Path(os.path.expanduser(DEFAULT_CONFIG))
+        daemon = Path(os.path.expanduser(DAEMON_CONFIG))
+        config_path = legacy if legacy.exists() else daemon
     if not config_path.exists():
         raise ConfigError(f"Dispatcher config not found: {config_path}")
 
@@ -88,6 +120,9 @@ def load_config(path: str | Path | None = None) -> DispatcherConfig:
     worker_env = g.get("worker_env")
     if worker_env is not None and not isinstance(worker_env, dict):
         raise ConfigError("global.worker_env must be a table/object")
+    sprintctl_takeup = g.get("sprintctl_takeup") or {}
+    if not isinstance(sprintctl_takeup, dict):
+        raise ConfigError("global.sprintctl_takeup must be a table/object")
     global_config = GlobalConfig(
         poll_interval_seconds=int(g.get("poll_interval_seconds", 30)),
         default_timeout_minutes=int(g.get("default_timeout_minutes", 30)),
@@ -110,7 +145,33 @@ def load_config(path: str | Path | None = None) -> DispatcherConfig:
         claude_bin=g.get("claude_bin", "claude"),
         worker_env={str(key): str(value) for key, value in (worker_env or {}).items()}
         or None,
+        heartbeat_interval_seconds=int(g.get("heartbeat_interval_seconds", 60)),
+        graceful_shutdown_seconds=int(g.get("graceful_shutdown_seconds", 30)),
+        session_state_path=(
+            _expand_path(g["session_state_path"], base=base)
+            if g.get("session_state_path")
+            else None
+        ),
+        audit_enabled=bool(g.get("audit", {}).get("enabled", True)),
+        fail_action_on_emit_error=bool(g.get("audit", {}).get("fail_action_on_emit_error", False)),
+        sprintctl_takeup=SprintctlTakeupConfig(
+            enabled=bool(sprintctl_takeup.get("enabled", False)),
+            remote_only=bool(sprintctl_takeup.get("remote_only", True)),
+            actor_prefix=str(sprintctl_takeup.get("actor_prefix", "actionq")),
+            release_on_sprintctl_error=bool(
+                sprintctl_takeup.get("release_on_sprintctl_error", False)
+            ),
+        ),
     )
+
+    harnesses: dict[str, HarnessConfig] = {}
+    for name, item in raw.get("harnesses", {}).items():
+        harnesses[name] = HarnessConfig(
+            name=name,
+            bin=str(item.get("bin", name)),
+            kind=str(item.get("kind", name)),
+            default_model=str(item.get("default_model", "")),
+        )
 
     projects = {}
     for name, item in raw.get("projects", {}).items():
@@ -122,6 +183,8 @@ def load_config(path: str | Path | None = None) -> DispatcherConfig:
             path=_expand_path(_required(item, "path", f"projects.{name}"), base=base),
             base_ref=item.get("base_ref", "HEAD"),
             env={str(key): str(value) for key, value in (env or {}).items()} or None,
+            default_harness=item.get("default_harness") or None,
+            default_model=item.get("default_model") or None,
         )
 
     actions = {}
@@ -148,8 +211,9 @@ def load_config(path: str | Path | None = None) -> DispatcherConfig:
             fake_commit_path=item.get(
                 "fake_commit_path", "docs/actionq-dispatch-smoke.md"
             ),
+            default_harness=item.get("default_harness") or None,
         )
 
     if not actions:
         raise ConfigError("At least one action config is required")
-    return DispatcherConfig(config_path, global_config, projects, actions)
+    return DispatcherConfig(config_path, global_config, projects, actions, harnesses)
