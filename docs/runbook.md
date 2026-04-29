@@ -83,6 +83,7 @@ dispatcher-once --config /projects/dev/actionq-dispatcher/examples/config.smoke.
 ```bash
 actionctl show <action-id>
 actionctl events --type coordinator_cycle --limit 5
+actionctl sessions --active --project sprintctl
 SPRINTCTL_DB=/projects/dev/sprintctl/.sprintctl/sprintctl.db sprintctl item show --id <work-item-id> --json
 git -C /projects/dev/sprintctl worktree list
 ```

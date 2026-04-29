@@ -14,4 +14,8 @@ def test_smoke_config_loads():
     assert action.runner == "fake"
     assert action.fake_commit_path == "docs/actionq-dispatch-smoke.md"
     assert config.global_config.worker_env is None
+    assert config.global_config.sprintctl_takeup.enabled is True
+    assert config.global_config.sprintctl_takeup.remote_only is True
+    assert config.global_config.sprintctl_takeup.actor_prefix == "actionq"
+    assert config.global_config.sprintctl_takeup.release_on_sprintctl_error is False
     assert action.test_command == "python3 -c pass"

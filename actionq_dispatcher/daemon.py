@@ -425,7 +425,7 @@ class ActionqDaemon:
         if pr is None:
             return
 
-        refs = [f"ad:{session_exit_event_id}"] if session_exit_event_id else None
+        refs = [session_exit_event_id] if session_exit_event_id else None
         pr_number = pr.get("number")
         state = pr.get("state")
 
@@ -575,7 +575,7 @@ class ActionqDaemon:
             "dispatch.started",
             actor=self.actor,
             summary=f"actionq session dispatched: {action_type} #{action_id}",
-            refs=[f"ad:{dq_event_id}"] if dq_event_id else None,
+            refs=[dq_event_id] if dq_event_id else None,
             metadata={
                 "session_id": session_id,
                 "action_id": action_id,
@@ -663,7 +663,7 @@ class ActionqDaemon:
             "session.start",
             actor=self.actor,
             summary=f"actionq session process started: {action_type} #{action_id} pid={session.pid}",
-            refs=[f"ad:{dq_event_id}"] if dq_event_id else None,
+            refs=[dq_event_id] if dq_event_id else None,
             metadata={
                 "session_id": session_id,
                 "action_id": action_id,
@@ -715,7 +715,7 @@ class ActionqDaemon:
             "session.exit",
             actor=self.actor,
             summary=f"actionq session exited: {action_type} #{action_id} outcome={outcome}",
-            refs=[f"ad:{session_start_event_id}"] if session_start_event_id else None,
+            refs=[session_start_event_id] if session_start_event_id else None,
             metadata={
                 "session_id": session_id,
                 "action_id": action_id,

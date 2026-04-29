@@ -32,6 +32,7 @@ Documentation = "https://github.com/bayleafwalker/actionq-dispatch/blob/main/doc
 
 [project.scripts]
 dispatcher-once = "actionq_dispatcher.cli:cli"
+actionq-daemon = "actionq_dispatcher.daemon_cli:cli"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

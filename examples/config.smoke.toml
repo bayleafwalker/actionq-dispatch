@@ -9,6 +9,12 @@ pause_file = "~/.local/state/actionq-dispatcher/PAUSED"
 actionctl_bin = "actionctl"
 claude_bin = "claude"
 
+[global.sprintctl_takeup]
+enabled = true
+remote_only = true
+actor_prefix = "actionq"
+release_on_sprintctl_error = false
+
 [projects.sprintctl]
 path = "/projects/dev/sprintctl"
 base_ref = "HEAD"

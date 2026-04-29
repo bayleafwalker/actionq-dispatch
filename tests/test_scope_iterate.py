@@ -42,7 +42,7 @@ class FakeSprintctl:
             "deps": {"blocked_by": [], "blocks": []},
         }
 
-    def claim_start(self, *, item_id, actor, ttl_seconds, branch, worktree):
+    def claim_start(self, *, item_id, actor, ttl_seconds, branch, worktree, runtime_session_id=None):
         return {"claim_id": 7, "claim_token": "secret"}
 
     def done_from_claim(self, *, item_id, claim_id, claim_token, actor):
@@ -378,6 +378,78 @@ def test_sprintctl_coordination_failure_does_not_require_json_flag(tmp_path):
     assert args[:4] == ["direnv", "exec", str(tmp_path), "sprintctl"]
     assert args[4:6] == ["event", "add"]
     assert "--json" not in args
+
+
+def test_sprintctl_takeup_take_uses_expected_remote_visibility_args(tmp_path):
+    runner = CapturingRunner()
+    client = SprintctlClient(
+        tmp_path,
+        runner,
+        project_env={"SPRINTCTL_BACKEND": "remote"},
+    )
+
+    client.takeup_take(
+        sprint_id=7,
+        actor="actionq:aqs:test",
+        instance_id="aqs:test",
+        runtime_session_id="aqs:test",
+        context="actionq action 11 scope-iterate via fake/fake",
+    )
+
+    call = runner.calls[0]
+    assert call["env"] == {"SPRINTCTL_BACKEND": "remote"}
+    assert call["args"][:7] == [
+        "direnv",
+        "exec",
+        str(tmp_path),
+        "sprintctl",
+        "takeup",
+        "take",
+        "--sprint-id",
+    ]
+    assert "--actor-kind" in call["args"]
+    assert "--instance-id" in call["args"]
+    assert "--runtime-session-id" in call["args"]
+    assert "--context" in call["args"]
+    assert "--json" in call["args"]
+
+
+def test_sprintctl_takeup_release_uses_expected_args(tmp_path):
+    runner = CapturingRunner()
+    client = SprintctlClient(tmp_path, runner)
+
+    client.takeup_release(
+        sprint_id=7,
+        actor="actionq:aqs:test",
+        instance_id="aqs:test",
+        runtime_session_id="aqs:test",
+        reason="completed",
+    )
+
+    args = runner.calls[0]["args"]
+    assert args[:6] == ["direnv", "exec", str(tmp_path), "sprintctl", "takeup", "release"]
+    assert "--reason" in args
+    assert "--json" in args
+
+
+def test_sprintctl_claim_start_passes_runtime_session_id(tmp_path):
+    runner = CapturingRunner()
+    client = SprintctlClient(tmp_path, runner)
+
+    client.claim_start(
+        item_id=42,
+        actor="dispatcher:actionq:42",
+        ttl_seconds=900,
+        branch="agent/scope-iterate/42",
+        worktree=tmp_path / "wt",
+        runtime_session_id="aqs:test",
+    )
+
+    args = runner.calls[0]["args"]
+    assert args[:6] == ["direnv", "exec", str(tmp_path), "sprintctl", "claim", "start"]
+    assert "--runtime-session-id" in args
+    assert "aqs:test" in args
+    assert "--json" in args
 
 
 def test_claude_worker_passes_prompt_on_stdin(tmp_path):
