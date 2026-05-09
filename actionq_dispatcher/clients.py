@@ -306,6 +306,17 @@ class SprintctlClient:
         if result.returncode != 0:
             raise ClientError(result.stderr)
 
+    def takeup_sweep(
+        self,
+        *,
+        actionctl_bin: str = "actionctl",
+        stale_after: int | None = None,
+    ) -> dict:
+        args = ["takeup", "sweep", "--actionctl-bin", actionctl_bin, "--json"]
+        if stale_after is not None:
+            args.extend(["--stale-after", str(stale_after)])
+        return self._run(args)
+
     def coordination_failure(
         self,
         *,

@@ -101,7 +101,11 @@ def default_clients(config: DispatcherConfig, runner: CommandRunner):
     actionctl = ActionctlClient(config.global_config.actionctl_bin, runner)
 
     def sprintctl_factory(project: ProjectConfig) -> SprintctlClient:
-        return SprintctlClient(project.path, runner, project_env=project.env)
+        return SprintctlClient(
+            project.sprintctl_path or project.path,
+            runner,
+            project_env=project.env,
+        )
 
     worker = ConfiguredWorker(config.global_config, runner)
     return actionctl, sprintctl_factory, worker
@@ -514,9 +518,10 @@ class ScopeIterateHandler:
     def _sprint_item_ready(self, item_bundle: dict) -> tuple[bool, str]:
         item = item_bundle.get("item", item_bundle)
         status = item.get("status")
-        if status != "pending":
-            return False, f"Item status must be pending for scope-iterate, got {status}"
         active_claims = item_bundle.get("active_claims") or []
+        # Allow re-dispatch of active items with no live claims (previous dispatch failed/released).
+        if status not in ("pending", "active"):
+            return False, f"Item status must be pending for scope-iterate, got {status}"
         if active_claims:
             return False, f"Item already has active claims: {len(active_claims)}"
         return True, "ok"

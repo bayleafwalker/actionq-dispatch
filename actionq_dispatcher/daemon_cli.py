@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
 import click
@@ -22,6 +23,15 @@ def cli(config_path: str | None, log_level: str) -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
         stream=sys.stderr,
     )
+
+    if not os.environ.get("TMUX") and not os.environ.get("ACTIONQ_SKIP_TMUX_CHECK"):
+        raise click.ClickException(
+            "daemon must run inside a tmux session\n"
+            "  start with: tmux new-session -s daemon\n"
+            "  then run:   actionq-daemon --config ~/.config/actionq/config.toml\n"
+            "  (set ACTIONQ_SKIP_TMUX_CHECK=1 to bypass)"
+        )
+
     try:
         config = load_config(config_path)
     except ConfigError as exc:

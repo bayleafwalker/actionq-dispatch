@@ -480,7 +480,7 @@ def test_pr_audit_events_not_emitted_when_failed(tmp_path):
         "headRefName": branch,
     }
     # Force exit_code=1 → settle returns "failed".
-    daemon._start_harness = lambda action_config, prepared, is_fake: _ImmediateProcess(1)  # type: ignore[method-assign]
+    daemon._start_harness = lambda action_config, prepared, is_fake, *, harness_name: _ImmediateProcess(1)  # type: ignore[method-assign]
     daemon.run(max_iters=1)
 
     types = [c["type_"] for c in fake_audit.calls]

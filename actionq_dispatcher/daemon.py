@@ -10,12 +10,13 @@ import time
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable
 
 from .clients import ActionctlClient, AuditctlClient, AuditResult, ClientError, SprintctlClient
-from .commands import CommandRunner, git_safe_env
+from .commands import CommandRunner
 from .config import DispatcherConfig, load_config
 from .core import CoordinatorError, PreparedSession, ScopeIterateHandler, _ActionSettled
+from .harness import ClaudeAdapter, CodexAdapter, HarnessAdapter, OpenCodeAdapter, ProcessFactory, ProcessLike
 from .session import (
     SessionRecord,
     _now_iso,
@@ -32,20 +33,6 @@ from .routing import RoutingError, resolve_routing
 from .worker import FakeCommitWorker, WorkerError
 
 log = logging.getLogger(__name__)
-
-
-class ProcessLike(Protocol):
-    @property
-    def pid(self) -> int: ...
-
-    def wait(self, timeout: float | None = None) -> int: ...
-
-    def terminate(self) -> None: ...
-
-    def kill(self) -> None: ...
-
-
-ProcessFactory = Callable[[list[str], Path, dict[str, str], str | None], ProcessLike]
 
 
 @dataclass
@@ -152,6 +139,7 @@ class ActionqDaemon:
 
     def run(self, max_iters: int | None = None) -> None:
         self._recover_stale_sessions()
+        self._sweep_stale_takeups()
         iters = 0
         while not self._shutdown.is_set():
             try:
@@ -192,6 +180,23 @@ class ActionqDaemon:
                 self._emit_recovered_session(session)
 
         save_session_state(self._session_state_path, [])
+
+    def _sweep_stale_takeups(self) -> None:
+        if not self.config.global_config.sprintctl_takeup.enabled:
+            return
+        for project in self.config.projects.values():
+            client = self._sprintctl_factory(project)
+            try:
+                result = client.takeup_sweep(actionctl_bin=self.config.global_config.actionctl_bin)
+                released = result.get("released", [])
+                if released:
+                    log.info(
+                        "takeup sweep released %d stale takeup(s) for project %s",
+                        len(released),
+                        project.name,
+                    )
+            except Exception as exc:
+                log.warning("takeup sweep failed for project %s: %s", project.name, exc)
 
     def _pid_is_live(self, pid: int) -> bool:
         try:
@@ -642,7 +647,7 @@ class ActionqDaemon:
         except Exception as exc:
             log.warning("failed to emit session.dispatch: %s", exc)
 
-        proc = self._start_harness(action_config, prepared, is_fake)
+        proc = self._start_harness(action_config, prepared, is_fake, harness_name=routing.harness)
         session.pid = proc.pid
         session.started_at = _now_iso()
         self._persist_session(session)
@@ -768,6 +773,8 @@ class ActionqDaemon:
         action_config,
         prepared: PreparedSession,
         is_fake: bool,
+        *,
+        harness_name: str,
     ) -> ProcessLike:
         if is_fake:
             fake = FakeCommitWorker(self.runner)
@@ -784,27 +791,27 @@ class ActionqDaemon:
                 returncode = 1
             return _ImmediateProcess(returncode)
 
-        from .acl import claude_tool_args
+        adapter = self._resolve_adapter(harness_name)
+        return adapter.start(action_config, prepared, self._process_factory)
 
-        allowed, denied = claude_tool_args(prepared.acl)
-        cmd = [
-            self.config.global_config.claude_bin,
-            "-p",
-            "--model",
-            action_config.model,
-            "--output-format",
-            "json",
-            "--no-session-persistence",
-            "--add-dir",
-            str(prepared.worktree),
-        ]
-        if allowed:
-            cmd.extend(["--allowedTools", ",".join(allowed)])
-        if denied:
-            cmd.extend(["--disallowedTools", ",".join(denied)])
+    def _resolve_adapter(self, harness_name: str) -> HarnessAdapter:
+        g = self.config.global_config
+        harness_cfg = self.config.harnesses.get(harness_name)
 
-        env = git_safe_env(prepared.worktree, self.config.global_config.worker_env)
-        return self._process_factory(cmd, prepared.worktree, env, prepared.prompt)
+        if harness_cfg is None:
+            if harness_name == "claude":
+                return ClaudeAdapter(bin=g.claude_bin, worker_env=g.worker_env)
+            raise ValueError(f"unknown harness {harness_name!r}: not in config.harnesses")
+
+        kind = harness_cfg.kind
+        bin_ = harness_cfg.bin
+        if kind == "claude":
+            return ClaudeAdapter(bin=bin_, worker_env=g.worker_env)
+        if kind == "codex":
+            return CodexAdapter(bin=bin_, worker_env=g.worker_env)
+        if kind == "opencode":
+            return OpenCodeAdapter(bin=bin_, worker_env=g.worker_env)
+        raise ValueError(f"unknown harness kind {kind!r} for harness {harness_name!r}")
 
     def _run_with_heartbeats(
         self,

@@ -61,6 +61,7 @@ class ProjectConfig:
     env: dict[str, str] | None = None
     default_harness: str | None = None
     default_model: str | None = None
+    sprintctl_path: Path | None = None
 
 
 @dataclass
@@ -178,6 +179,7 @@ def load_config(path: str | Path | None = None) -> DispatcherConfig:
         env = item.get("env")
         if env is not None and not isinstance(env, dict):
             raise ConfigError(f"projects.{name}.env must be a table/object")
+        sprintctl_path_raw = item.get("sprintctl_path")
         projects[name] = ProjectConfig(
             name=name,
             path=_expand_path(_required(item, "path", f"projects.{name}"), base=base),
@@ -185,6 +187,7 @@ def load_config(path: str | Path | None = None) -> DispatcherConfig:
             env={str(key): str(value) for key, value in (env or {}).items()} or None,
             default_harness=item.get("default_harness") or None,
             default_model=item.get("default_model") or None,
+            sprintctl_path=_expand_path(sprintctl_path_raw, base=base) if sprintctl_path_raw else None,
         )
 
     actions = {}

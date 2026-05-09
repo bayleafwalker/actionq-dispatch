@@ -20,6 +20,11 @@ SPRINTCTL_DB=/projects/dev/sprintctl/.sprintctl/sprintctl.db
 KCTL_DB=/projects/dev/sprintctl/.kctl/kctl.db
 ```
 
+It also receives LLM provider credentials from the `vscode-shell-llm-api-keys`
+secret. Keep those variables in the environment when running Claude-backed
+dispatches; do not replace the whole environment with only `ACTIONQ_URL` and
+`SPRINTCTL_URL`.
+
 After the appservice change reconciles, verify from an appservice shell:
 
 ```bash
@@ -36,6 +41,46 @@ uv tool install /projects/dev/actionq/
 uv tool install /projects/dev/actionq-dispatcher/
 actionctl migrate
 ```
+
+### Stale shim and user environment checks
+
+If `/home/dev/.local/bin/actionctl`, `/home/dev/.local/bin/dispatcher-once`, or
+`/home/dev/.local/bin/sprintctl` fails with `bad interpreter`, treat it as a
+stale uv shim first. The persistent pod virtualenv entry points are the preferred
+fallback:
+
+```bash
+/home/dev/.local/state/pod-venvs/actionq/bin/actionctl
+/home/dev/.local/state/pod-venvs/actionq-dispatcher/bin/dispatcher-once
+/home/dev/.local/state/pod-venvs/sprintctl/bin/sprintctl
+```
+
+When running through `kubectl exec`, verify the effective user and environment:
+
+```bash
+direnv exec /projects/dev/appservice kubectl -n vscode exec deploy/vscode-shell -- \
+  bash -lc 'id; test -n "$ACTIONQ_URL" && echo ACTIONQ_URL=set; test -n "$ANTHROPIC_API_KEY" && echo ANTHROPIC_API_KEY=set'
+```
+
+`kubectl exec` may enter as `root`. The worker harness must run as `dev`, but it
+must retain the injected LLM credentials. Prefer preserving the environment:
+
+```bash
+direnv exec /projects/dev/appservice kubectl -n vscode exec deploy/vscode-shell -- \
+  bash -lc 'runuser -u dev --preserve-environment -- dispatcher-once --config "$DISPATCHER_CONFIG"'
+```
+
+If you need to bypass stale shims, override only `PATH` and keep the rest of the
+deployment environment:
+
+```bash
+direnv exec /projects/dev/appservice kubectl -n vscode exec deploy/vscode-shell -- \
+  bash -lc 'export PATH="/home/dev/.local/state/pod-venvs/actionq/bin:/home/dev/.local/state/pod-venvs/actionq-dispatcher/bin:/home/dev/.local/state/pod-venvs/sprintctl/bin:$PATH"; runuser -u dev --preserve-environment -- dispatcher-once --config "$DISPATCHER_CONFIG"'
+```
+
+If Claude returns `401 Invalid API key` immediately after a `runuser`, `su`, or
+manual `env` wrapper change, check for dropped LLM environment variables before
+debugging actionq, sprintctl, or CNPG connectivity.
 
 ## First smoke dispatch
 

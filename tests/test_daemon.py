@@ -13,9 +13,12 @@ from actionq_dispatcher.config import (
     ActionConfig,
     DispatcherConfig,
     GlobalConfig,
+    HarnessConfig,
     ProjectConfig,
+    SprintctlTakeupConfig,
 )
 from actionq_dispatcher.daemon import ActionqDaemon, _ImmediateProcess
+from actionq_dispatcher.harness import ClaudeAdapter, CodexAdapter, OpenCodeAdapter
 from actionq_dispatcher.session import SessionRecord, load_session_state, save_session_state
 
 
@@ -67,11 +70,14 @@ class FakeActionctl:
 
 
 class FakeSprintctl:
-    def __init__(self, *, takeup_error=None, takeup_release_error=None):
+    def __init__(self, *, takeup_error=None, takeup_release_error=None, sweep_result=None, sweep_error=None):
         self.takeup_error = takeup_error
         self.takeup_release_error = takeup_release_error
+        self.sweep_result = sweep_result or {"released": [], "skipped": []}
+        self.sweep_error = sweep_error
         self.takeups: list[dict] = []
         self.takeup_releases: list[dict] = []
+        self.sweep_calls: list[dict] = []
 
     def item_show(self, item_id):
         return {
@@ -132,6 +138,12 @@ class FakeSprintctl:
 
     def release_claim(self, *, claim_id, claim_token, actor):
         pass
+
+    def takeup_sweep(self, *, actionctl_bin="actionctl", stale_after=None):
+        self.sweep_calls.append({"actionctl_bin": actionctl_bin, "stale_after": stale_after})
+        if self.sweep_error is not None:
+            raise self.sweep_error
+        return self.sweep_result
 
     def coordination_failure(self, **kwargs):
         return {}
@@ -335,7 +347,7 @@ def test_session_heartbeat_emitted_with_slow_process(tmp_path):
     daemon = _make_daemon(config, actionctl, sprintctl)
 
     # Override _start_harness to inject slow process regardless of runner type.
-    def patched_start(action_config, prepared, is_fake):
+    def patched_start(action_config, prepared, is_fake, *, harness_name):
         return proc
 
     daemon._start_harness = patched_start  # type: ignore[method-assign]
@@ -374,7 +386,7 @@ def test_shutdown_during_active_child_emits_paused_and_exits(tmp_path):
 
     daemon = _make_daemon(config, actionctl, sprintctl)
 
-    def patched_start(action_config, prepared, is_fake):
+    def patched_start(action_config, prepared, is_fake, *, harness_name):
         daemon._shutdown.set()
         return proc
 
@@ -609,3 +621,138 @@ def test_sprintctl_takeup_release_failure_does_not_flip_completed_action(tmp_pat
     assert exited[1]["outcome"] == "completed"
     assert exited[1]["sprint_release_status"] == "failed"
     assert exited[1]["sprint_release_error"] == "release boom"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_adapter (C-8)
+# ---------------------------------------------------------------------------
+
+
+def _daemon_for_resolve(tmp_path: Path, *, harnesses: dict | None = None) -> ActionqDaemon:
+    repo = _repo(tmp_path)
+    config = _config(tmp_path, repo)
+    config.harnesses = harnesses or {}
+    return _make_daemon(config, FakeActionctl(), FakeSprintctl())
+
+
+def test_resolve_adapter_claude_fallback(tmp_path):
+    daemon = _daemon_for_resolve(tmp_path)
+    daemon.config.global_config.claude_bin = "/usr/bin/claude"
+    adapter = daemon._resolve_adapter("claude")
+    assert isinstance(adapter, ClaudeAdapter)
+    assert adapter.bin == "/usr/bin/claude"
+
+
+def test_resolve_adapter_claude_via_harness_config(tmp_path):
+    harnesses = {"my-claude": HarnessConfig(name="my-claude", bin="/opt/claude", kind="claude", default_model="sonnet")}
+    daemon = _daemon_for_resolve(tmp_path, harnesses=harnesses)
+    adapter = daemon._resolve_adapter("my-claude")
+    assert isinstance(adapter, ClaudeAdapter)
+    assert adapter.bin == "/opt/claude"
+
+
+def test_resolve_adapter_codex(tmp_path):
+    harnesses = {"codex": HarnessConfig(name="codex", bin="/usr/local/bin/codex", kind="codex", default_model="gpt-4o")}
+    daemon = _daemon_for_resolve(tmp_path, harnesses=harnesses)
+    adapter = daemon._resolve_adapter("codex")
+    assert isinstance(adapter, CodexAdapter)
+    assert adapter.bin == "/usr/local/bin/codex"
+
+
+def test_resolve_adapter_opencode(tmp_path):
+    harnesses = {"opencode": HarnessConfig(name="opencode", bin="opencode", kind="opencode", default_model="codestral")}
+    daemon = _daemon_for_resolve(tmp_path, harnesses=harnesses)
+    adapter = daemon._resolve_adapter("opencode")
+    assert isinstance(adapter, OpenCodeAdapter)
+    assert adapter.bin == "opencode"
+
+
+def test_resolve_adapter_unknown_harness_raises(tmp_path):
+    daemon = _daemon_for_resolve(tmp_path)
+    with pytest.raises(ValueError, match="unknown harness"):
+        daemon._resolve_adapter("ghost")
+
+
+def test_resolve_adapter_unknown_kind_raises(tmp_path):
+    harnesses = {"weird": HarnessConfig(name="weird", bin="weird", kind="future-agent", default_model="")}
+    daemon = _daemon_for_resolve(tmp_path, harnesses=harnesses)
+    with pytest.raises(ValueError, match="unknown harness kind"):
+        daemon._resolve_adapter("weird")
+
+
+def test_resolve_adapter_worker_env_propagated(tmp_path):
+    harnesses = {"codex": HarnessConfig(name="codex", bin="codex", kind="codex", default_model="")}
+    daemon = _daemon_for_resolve(tmp_path, harnesses=harnesses)
+    daemon.config.global_config.worker_env = {"OPENAI_API_KEY": "sk-test"}
+    adapter = daemon._resolve_adapter("codex")
+    assert isinstance(adapter, CodexAdapter)
+    assert adapter.worker_env == {"OPENAI_API_KEY": "sk-test"}
+
+
+def test_sweep_stale_takeups_calls_sweep_per_project_when_enabled(tmp_path):
+    repo = _repo(tmp_path)
+    config = _config(tmp_path, repo)
+    config.global_config.sprintctl_takeup = SprintctlTakeupConfig(
+        enabled=True, actor_prefix="actionq"
+    )
+    sweep_result = {"released": [{"sprint_id": 1, "actor": "actionq:aqs:x"}], "skipped": []}
+    sprintctl = FakeSprintctl(sweep_result=sweep_result)
+    daemon = _make_daemon(config, FakeActionctl(action=None), sprintctl)
+
+    daemon._sweep_stale_takeups()
+
+    assert len(sprintctl.sweep_calls) == 1
+    assert sprintctl.sweep_calls[0]["actionctl_bin"] == "actionctl"
+
+
+def test_sweep_stale_takeups_skipped_when_takeup_disabled(tmp_path):
+    repo = _repo(tmp_path)
+    config = _config(tmp_path, repo)
+    config.global_config.sprintctl_takeup = SprintctlTakeupConfig(enabled=False)
+    sprintctl = FakeSprintctl()
+    daemon = _make_daemon(config, FakeActionctl(action=None), sprintctl)
+
+    daemon._sweep_stale_takeups()
+
+    assert sprintctl.sweep_calls == []
+
+
+def test_sweep_stale_takeups_tolerates_sweep_failure(tmp_path):
+    repo = _repo(tmp_path)
+    config = _config(tmp_path, repo)
+    config.global_config.sprintctl_takeup = SprintctlTakeupConfig(enabled=True)
+    sprintctl = FakeSprintctl(sweep_error=RuntimeError("sweep failed"))
+    daemon = _make_daemon(config, FakeActionctl(action=None), sprintctl)
+
+    daemon._sweep_stale_takeups()  # must not raise
+
+    assert len(sprintctl.sweep_calls) == 1
+
+
+def test_daemon_cli_refuses_without_tmux(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+    from actionq_dispatcher.daemon_cli import cli
+
+    runner = CliRunner()
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.delenv("ACTIONQ_SKIP_TMUX_CHECK", raising=False)
+
+    result = runner.invoke(cli, ["--help"])
+    assert result.exit_code == 0  # --help always succeeds
+
+    result = runner.invoke(cli, [])
+    assert result.exit_code != 0
+    assert "tmux" in result.output.lower()
+
+
+def test_daemon_cli_bypass_tmux_check(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+    from actionq_dispatcher.daemon_cli import cli
+
+    runner = CliRunner()
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.setenv("ACTIONQ_SKIP_TMUX_CHECK", "1")
+
+    # No config file available — should fail on config load, not tmux check
+    result = runner.invoke(cli, [])
+    assert "tmux" not in result.output.lower()

@@ -20,7 +20,8 @@
     "python",
     "python3",
     "uv run",
-    "ruff"
+    "ruff",
+    "kustomize"
   ],
   "bash_denylist": [
     "git push",
