@@ -8,7 +8,7 @@ import subprocess
 import threading
 import time
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -510,6 +510,12 @@ class ActionqDaemon:
                 log.error("failed to reject action after routing error: %s", e2)
             return
 
+        routed_action_config = replace(
+            action_config,
+            model=routing.model,
+            reasoning=routing.reasoning,
+        )
+
         # Generate session_id early so dispatch.queued can include it.
         session_id = new_session_id()
         audit: AuditctlClient | None = (
@@ -555,7 +561,7 @@ class ActionqDaemon:
         )
 
         try:
-            prepared = handler.prepare(action, action_config, runtime_session_id=session_id)
+            prepared = handler.prepare(action, routed_action_config, runtime_session_id=session_id)
         except _ActionSettled:
             return
         except CoordinatorError as exc:
@@ -647,7 +653,7 @@ class ActionqDaemon:
         except Exception as exc:
             log.warning("failed to emit session.dispatch: %s", exc)
 
-        proc = self._start_harness(action_config, prepared, is_fake, harness_name=routing.harness)
+        proc = self._start_harness(routed_action_config, prepared, is_fake, harness_name=routing.harness)
         session.pid = proc.pid
         session.started_at = _now_iso()
         self._persist_session(session)
@@ -687,7 +693,7 @@ class ActionqDaemon:
         sprint_release_error: str | None = None
 
         try:
-            outcome = handler.settle(prepared, action_config, exit_code=exit_code)
+            outcome = handler.settle(prepared, routed_action_config, exit_code=exit_code)
         except Exception as exc:
             log.error("settle error: %s", exc, exc_info=True)
             try:

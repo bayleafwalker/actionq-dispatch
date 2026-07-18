@@ -28,7 +28,7 @@ def _acl(*, allowed_tools=None, bash_allowlist=None, bash_denylist=None):
     )
 
 
-def _action_config(model="claude-sonnet-4-6"):
+def _action_config(model="claude-sonnet-5", reasoning=None):
     return ActionConfig(
         name="test-action",
         model=model,
@@ -41,6 +41,7 @@ def _action_config(model="claude-sonnet-4-6"):
         test_command="pytest",
         pre_gates=[],
         post_gates=[],
+        reasoning=reasoning,
     )
 
 
@@ -88,12 +89,30 @@ def test_start_builds_base_claude_command(tmp_path):
     assert cmd[0] == "claude"
     assert "-p" in cmd
     assert "--model" in cmd
-    assert cmd[cmd.index("--model") + 1] == "claude-sonnet-4-6"
+    assert cmd[cmd.index("--model") + 1] == "claude-sonnet-5"
     assert "--output-format" in cmd
     assert cmd[cmd.index("--output-format") + 1] == "json"
     assert "--no-session-persistence" in cmd
     assert "--add-dir" in cmd
     assert cmd[cmd.index("--add-dir") + 1] == str(worktree)
+
+
+def test_claude_start_passes_verified_reasoning_effort(tmp_path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    captured = {}
+
+    def fake_factory(cmd, cwd, env, prompt):
+        captured["cmd"] = cmd
+        proc = MagicMock()
+        proc.pid = 1
+        return proc
+
+    ClaudeAdapter(bin="claude", worker_env=None).start(
+        _action_config(reasoning="high"), _prepared(worktree), fake_factory
+    )
+
+    assert captured["cmd"][captured["cmd"].index("--effort") + 1] == "high"
 
 
 def test_start_uses_custom_bin(tmp_path):
@@ -303,6 +322,25 @@ def test_codex_start_builds_command(tmp_path):
     assert cmd[-1] == "fix the tests"
 
 
+def test_codex_start_ignores_unverified_reasoning_override(tmp_path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    captured = {}
+
+    def fake_factory(cmd, cwd, env, prompt):
+        captured["cmd"] = cmd
+        proc = MagicMock()
+        proc.pid = 1
+        return proc
+
+    CodexAdapter(bin="codex", worker_env=None).start(
+        _action_config(model="gpt-5", reasoning="high"), _prepared(worktree), fake_factory
+    )
+
+    assert "model_reasoning_effort" not in captured["cmd"]
+    assert "-c" not in captured["cmd"]
+
+
 def test_codex_start_passes_prompt_as_positional_arg(tmp_path):
     worktree = tmp_path / "wt"
     worktree.mkdir()
@@ -405,6 +443,24 @@ def test_opencode_start_builds_command(tmp_path):
     assert cmd[1] == "run"
     assert "--model" in cmd
     assert cmd[cmd.index("--model") + 1] == "codestral"
+
+
+def test_opencode_start_ignores_unverified_reasoning_override(tmp_path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    captured = {}
+
+    def fake_factory(cmd, cwd, env, prompt):
+        captured["cmd"] = cmd
+        proc = MagicMock()
+        proc.pid = 1
+        return proc
+
+    OpenCodeAdapter(bin="opencode", worker_env=None).start(
+        _action_config(model="claude-sonnet-5", reasoning="high"), _prepared(worktree), fake_factory
+    )
+
+    assert "--effort" not in captured["cmd"]
 
 
 def test_opencode_start_passes_prompt_via_stdin(tmp_path):

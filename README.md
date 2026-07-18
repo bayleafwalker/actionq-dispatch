@@ -91,7 +91,8 @@ path = "/projects/dev/sprintctl"
 base_ref = "HEAD"
 
 [actions.scope-iterate]
-model = "claude-sonnet-4-6"
+model = "claude-haiku-4-5-20251001"
+reasoning = "medium"
 runner = "local"
 prompt_template = "/projects/dev/actionq-dispatcher/prompts/scope-iterate.md"
 tool_acl = "/projects/dev/actionq-dispatcher/acls/scope-iterate.json"
@@ -112,6 +113,11 @@ The dispatcher currently supports two runner modes:
 - `fake` or `fake-commit`: writes a deterministic smoke file and creates a git commit without calling Claude
 
 The fake worker is useful for validating the queue, worktree, branch, ACL, and post-gate flow before allowing real model-backed runs.
+
+Actions, projects, and harnesses may set an optional `reasoning` value. It uses
+the same precedence as model routing. Claude-backed dispatches pass it as
+`--effort`; unsupported harnesses safely ignore it until their syntax is
+verified.
 
 ## Operations
 

@@ -9,6 +9,7 @@ from .config import ActionConfig, DispatcherConfig, HarnessConfig, ProjectConfig
 class RoutingResult:
     harness: str
     model: str
+    reasoning: str | None
     routing_source: str
 
 
@@ -38,13 +39,29 @@ def resolve_routing(
     action_harness = action.get("harness")
     if action_harness:
         model = action.get("model") or _model_for_harness(action_harness, harnesses, action_config.model)
-        return RoutingResult(harness=action_harness, model=model, routing_source="action-explicit")
+        reasoning = action.get("reasoning") or _reasoning_for_harness(
+            action_harness, harnesses, action_config.reasoning
+        )
+        return RoutingResult(
+            harness=action_harness,
+            model=model,
+            reasoning=reasoning,
+            routing_source="action-explicit",
+        )
 
     # 2. Project default.
     if project_config is not None and project_config.default_harness:
         harness = project_config.default_harness
         model = project_config.default_model or _model_for_harness(harness, harnesses, action_config.model)
-        return RoutingResult(harness=harness, model=model, routing_source="project-default")
+        reasoning = project_config.default_reasoning or _reasoning_for_harness(
+            harness, harnesses, action_config.reasoning
+        )
+        return RoutingResult(
+            harness=harness,
+            model=model,
+            reasoning=reasoning,
+            routing_source="project-default",
+        )
 
     # 3. Action-kind default: explicit default_harness or runner compatibility mapping.
     action_kind_harness = _harness_from_action_config(action_config)
@@ -52,6 +69,7 @@ def resolve_routing(
         return RoutingResult(
             harness=action_kind_harness,
             model=action_config.model,
+            reasoning=action_config.reasoning,
             routing_source="action-kind-default",
         )
 
@@ -61,6 +79,7 @@ def resolve_routing(
         return RoutingResult(
             harness=harness_name,
             model=harness_cfg.default_model,
+            reasoning=harness_cfg.default_reasoning,
             routing_source="global-fallback",
         )
 
@@ -89,4 +108,15 @@ def _model_for_harness(
     cfg = harnesses.get(harness)
     if cfg is not None and cfg.default_model:
         return cfg.default_model
+    return fallback
+
+
+def _reasoning_for_harness(
+    harness: str,
+    harnesses: dict[str, HarnessConfig],
+    fallback: str | None,
+) -> str | None:
+    cfg = harnesses.get(harness)
+    if cfg is not None and cfg.default_reasoning:
+        return cfg.default_reasoning
     return fallback

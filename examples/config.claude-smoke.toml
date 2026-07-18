@@ -15,7 +15,8 @@ base_ref = "HEAD"
 env = { SPRINTCTL_DB = "/projects/dev/sprintctl/.sprintctl/sprintctl.db", KCTL_DB = "/projects/dev/sprintctl/.kctl/kctl.db", SPRINTCTL_BACKEND = "local" }
 
 [actions.scope-iterate]
-model = "claude-sonnet-4-6"
+model = "claude-haiku-4-5-20251001"
+reasoning = "medium"
 runner = "local"
 prompt_template = "/projects/dev/actionq-dispatcher/prompts/scope-iterate.md"
 working_dir = "{worktree_root}/{project}/{action.id}"

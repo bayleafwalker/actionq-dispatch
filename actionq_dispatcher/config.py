@@ -29,6 +29,7 @@ class HarnessConfig:
     bin: str
     kind: str
     default_model: str
+    default_reasoning: str | None = None
 
 
 @dataclass
@@ -62,6 +63,7 @@ class ProjectConfig:
     default_harness: str | None = None
     default_model: str | None = None
     sprintctl_path: Path | None = None
+    default_reasoning: str | None = None
 
 
 @dataclass
@@ -79,6 +81,7 @@ class ActionConfig:
     post_gates: list[str]
     fake_commit_path: str = "docs/actionq-dispatch-smoke.md"
     default_harness: str | None = None
+    reasoning: str | None = None
 
 
 @dataclass
@@ -172,6 +175,11 @@ def load_config(path: str | Path | None = None) -> DispatcherConfig:
             bin=str(item.get("bin", name)),
             kind=str(item.get("kind", name)),
             default_model=str(item.get("default_model", "")),
+            default_reasoning=(
+                str(item["default_reasoning"])
+                if item.get("default_reasoning")
+                else None
+            ),
         )
 
     projects = {}
@@ -188,6 +196,7 @@ def load_config(path: str | Path | None = None) -> DispatcherConfig:
             default_harness=item.get("default_harness") or None,
             default_model=item.get("default_model") or None,
             sprintctl_path=_expand_path(sprintctl_path_raw, base=base) if sprintctl_path_raw else None,
+            default_reasoning=item.get("default_reasoning") or None,
         )
 
     actions = {}
@@ -215,6 +224,7 @@ def load_config(path: str | Path | None = None) -> DispatcherConfig:
                 "fake_commit_path", "docs/actionq-dispatch-smoke.md"
             ),
             default_harness=item.get("default_harness") or None,
+            reasoning=item.get("reasoning") or None,
         )
 
     if not actions:

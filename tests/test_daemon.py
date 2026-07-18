@@ -334,6 +334,32 @@ def test_fake_runner_session_exited_action_id_matches(tmp_path):
     assert dispatch_event[1]["claim"]["work_item_id"] == 1
 
 
+def test_daemon_passes_resolved_model_and_reasoning_to_adapter(tmp_path):
+    repo = _repo(tmp_path)
+    config = _config(tmp_path, repo, runner="local")
+    config.actions["scope-iterate"].model = "action-model"
+    config.actions["scope-iterate"].reasoning = "low"
+    config.projects["demo"].default_harness = "claude"
+    config.projects["demo"].default_model = "project-model"
+    config.projects["demo"].default_reasoning = "high"
+    captured = {}
+
+    def process_factory(cmd, cwd, env, prompt):
+        captured["cmd"] = cmd
+        return _ImmediateProcess(0)
+
+    daemon = _make_daemon(
+        config,
+        FakeActionctl(action=_action()),
+        FakeSprintctl(),
+        process_factory=process_factory,
+    )
+    daemon.run(max_iters=1)
+
+    assert captured["cmd"][captured["cmd"].index("--model") + 1] == "project-model"
+    assert captured["cmd"][captured["cmd"].index("--effort") + 1] == "high"
+
+
 def test_session_heartbeat_emitted_with_slow_process(tmp_path):
     repo = _repo(tmp_path)
     config = _config(tmp_path, repo, runner="fake")
@@ -425,7 +451,7 @@ def test_stale_session_recovery_emits_exited_event(tmp_path):
         project="demo",
         target_ref="1",
         harness="claude",
-        model="claude-sonnet-4-6",
+        model="claude-sonnet-5",
         worktree="/tmp/old",
         branch="agent/scope-iterate/99",
         pid=999999999,  # almost certainly not a live PID
@@ -459,7 +485,7 @@ def test_actionctl_sessions_recovery_emits_exited_when_local_state_missing(tmp_p
                 "project": "demo",
                 "target_ref": "1",
                 "harness": "claude",
-                "model": "claude-sonnet-4-6",
+                "model": "claude-sonnet-5",
                 "worktree": "/tmp/recovered",
                 "branch": "agent/scope-iterate/77",
                 "pid": 999999999,
@@ -495,7 +521,7 @@ def test_actionctl_sessions_recovery_skips_live_pid(tmp_path):
                 "project": "demo",
                 "target_ref": "1",
                 "harness": "claude",
-                "model": "claude-sonnet-4-6",
+                "model": "claude-sonnet-5",
                 "worktree": "/tmp/live",
                 "branch": "agent/scope-iterate/88",
                 "pid": os.getpid(),

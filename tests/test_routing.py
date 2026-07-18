@@ -29,7 +29,12 @@ def _global_config(tmp_path: Path) -> GlobalConfig:
     )
 
 
-def _action_config(runner: str = "local", model: str = "claude-sonnet-4-6", default_harness: str | None = None) -> ActionConfig:
+def _action_config(
+    runner: str = "local",
+    model: str = "claude-sonnet-5",
+    default_harness: str | None = None,
+    reasoning: str | None = None,
+) -> ActionConfig:
     return ActionConfig(
         name="scope-iterate",
         model=model,
@@ -43,6 +48,7 @@ def _action_config(runner: str = "local", model: str = "claude-sonnet-4-6", defa
         pre_gates=[],
         post_gates=[],
         default_harness=default_harness,
+        reasoning=reasoning,
     )
 
 
@@ -50,8 +56,15 @@ def _project_config(
     path: Path,
     default_harness: str | None = None,
     default_model: str | None = None,
+    default_reasoning: str | None = None,
 ) -> ProjectConfig:
-    return ProjectConfig(name="myproject", path=path, default_harness=default_harness, default_model=default_model)
+    return ProjectConfig(
+        name="myproject",
+        path=path,
+        default_harness=default_harness,
+        default_model=default_model,
+        default_reasoning=default_reasoning,
+    )
 
 
 def _config(
@@ -101,6 +114,31 @@ def test_action_explicit_harness_uses_harness_default_model_when_no_action_model
     assert result.routing_source == "action-explicit"
 
 
+def test_action_explicit_reasoning_wins(tmp_path):
+    harnesses = {
+        "codex": HarnessConfig(
+            name="codex",
+            bin="codex",
+            kind="codex",
+            default_model="gpt-5",
+            default_reasoning="medium",
+        )
+    }
+    config = _config(tmp_path, harnesses=harnesses, action_config=_action_config(reasoning="low"))
+    action = {
+        "id": 1,
+        "action_type": "scope-iterate",
+        "project": "myproject",
+        "target_ref": "1",
+        "harness": "codex",
+        "reasoning": "high",
+    }
+
+    result = resolve_routing(action, config.actions["scope-iterate"], config.projects["myproject"], config)
+
+    assert result.reasoning == "high"
+
+
 # ---------------------------------------------------------------------------
 # Project default
 # ---------------------------------------------------------------------------
@@ -131,6 +169,31 @@ def test_project_default_falls_back_to_action_model_when_no_project_model(tmp_pa
     assert result.model == "action-model"
 
 
+def test_project_default_reasoning_wins_over_harness_and_action_defaults(tmp_path):
+    harnesses = {
+        "codex": HarnessConfig(
+            name="codex",
+            bin="codex",
+            kind="codex",
+            default_model="gpt-5",
+            default_reasoning="medium",
+        )
+    }
+    config = _config(
+        tmp_path,
+        harnesses=harnesses,
+        project_config=_project_config(
+            tmp_path / "repo", default_harness="codex", default_reasoning="high"
+        ),
+        action_config=_action_config(reasoning="low"),
+    )
+    action = {"id": 1, "action_type": "scope-iterate", "project": "myproject", "target_ref": "1"}
+
+    result = resolve_routing(action, config.actions["scope-iterate"], config.projects["myproject"], config)
+
+    assert result.reasoning == "high"
+
+
 # ---------------------------------------------------------------------------
 # Action-kind default
 # ---------------------------------------------------------------------------
@@ -147,6 +210,19 @@ def test_action_kind_default_used_when_no_project_default(tmp_path):
     assert result.harness == "claude"
     assert result.model == "sonnet"
     assert result.routing_source == "action-kind-default"
+
+
+def test_action_kind_default_uses_action_reasoning(tmp_path):
+    config = _config(
+        tmp_path,
+        project_config=_project_config(tmp_path / "repo"),
+        action_config=_action_config(runner="local", reasoning="low"),
+    )
+    action = {"id": 1, "action_type": "scope-iterate", "project": "myproject", "target_ref": "1"}
+
+    result = resolve_routing(action, config.actions["scope-iterate"], config.projects["myproject"], config)
+
+    assert result.reasoning == "low"
 
 
 def test_runner_local_maps_to_claude(tmp_path):
@@ -183,7 +259,15 @@ def test_explicit_default_harness_on_action_config(tmp_path):
 
 
 def test_single_global_fallback_used_when_no_other_routing(tmp_path):
-    harnesses = {"opencode": HarnessConfig(name="opencode", bin="opencode", kind="opencode", default_model="codestral")}
+    harnesses = {
+        "opencode": HarnessConfig(
+            name="opencode",
+            bin="opencode",
+            kind="opencode",
+            default_model="codestral",
+            default_reasoning="medium",
+        )
+    }
     config = _config(
         tmp_path,
         harnesses=harnesses,
@@ -194,6 +278,7 @@ def test_single_global_fallback_used_when_no_other_routing(tmp_path):
     result = resolve_routing(action, config.actions["scope-iterate"], config.projects["myproject"], config)
     assert result.harness == "opencode"
     assert result.model == "codestral"
+    assert result.reasoning == "medium"
     assert result.routing_source == "global-fallback"
 
 

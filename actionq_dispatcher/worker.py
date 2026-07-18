@@ -43,6 +43,8 @@ class ClaudeWorker:
             "--add-dir",
             str(worktree),
         ]
+        if action_config.reasoning:
+            cmd.extend(["--effort", action_config.reasoning])
         if allowed:
             cmd.extend(["--allowedTools", ",".join(allowed)])
         if denied:
