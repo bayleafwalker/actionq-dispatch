@@ -30,6 +30,25 @@ class HarnessConfig:
     kind: str
     default_model: str
     default_reasoning: str | None = None
+    provider: str | None = None
+    transport: str | None = None
+    surface: str | None = None
+
+
+@dataclass
+class RoutingConfig:
+    """Trusted runtime routing context.
+
+    Caller identity is deliberately configuration/session metadata.  It is
+    never populated from an action prompt or worker output.
+    """
+
+    policy_path: Path | None = None
+    default_harness: str | None = None
+    trusted_caller_harness: str | None = None
+    caller_provider: str | None = None
+    caller_transport: str | None = None
+    caller_surface: str | None = None
 
 
 @dataclass
@@ -91,6 +110,7 @@ class DispatcherConfig:
     projects: dict[str, ProjectConfig]
     actions: dict[str, ActionConfig]
     harnesses: dict[str, HarnessConfig] = field(default_factory=dict)
+    routing: RoutingConfig = field(default_factory=RoutingConfig)
 
 
 def _expand_path(raw: str, *, base: Path | None = None) -> Path:
@@ -127,6 +147,9 @@ def load_config(path: str | Path | None = None) -> DispatcherConfig:
     sprintctl_takeup = g.get("sprintctl_takeup") or {}
     if not isinstance(sprintctl_takeup, dict):
         raise ConfigError("global.sprintctl_takeup must be a table/object")
+    routing_raw = g.get("routing") or raw.get("routing") or {}
+    if not isinstance(routing_raw, dict):
+        raise ConfigError("routing must be a table/object")
     global_config = GlobalConfig(
         poll_interval_seconds=int(g.get("poll_interval_seconds", 30)),
         default_timeout_minutes=int(g.get("default_timeout_minutes", 30)),
@@ -180,6 +203,9 @@ def load_config(path: str | Path | None = None) -> DispatcherConfig:
                 if item.get("default_reasoning")
                 else None
             ),
+            provider=(str(item["provider"]) if item.get("provider") else None),
+            transport=(str(item["transport"]) if item.get("transport") else None),
+            surface=(str(item["surface"]) if item.get("surface") else None),
         )
 
     projects = {}
@@ -229,4 +255,22 @@ def load_config(path: str | Path | None = None) -> DispatcherConfig:
 
     if not actions:
         raise ConfigError("At least one action config is required")
-    return DispatcherConfig(config_path, global_config, projects, actions, harnesses)
+    routing = RoutingConfig(
+        policy_path=(
+            _expand_path(str(routing_raw["policy_path"]), base=base)
+            if routing_raw.get("policy_path")
+            else None
+        ),
+        default_harness=(str(routing_raw["default_harness"]) if routing_raw.get("default_harness") else None),
+        trusted_caller_harness=(
+            str(routing_raw["trusted_caller_harness"])
+            if routing_raw.get("trusted_caller_harness")
+            else None
+        ),
+        caller_provider=(str(routing_raw["caller_provider"]) if routing_raw.get("caller_provider") else None),
+        caller_transport=(
+            str(routing_raw["caller_transport"]) if routing_raw.get("caller_transport") else None
+        ),
+        caller_surface=(str(routing_raw["caller_surface"]) if routing_raw.get("caller_surface") else None),
+    )
+    return DispatcherConfig(config_path, global_config, projects, actions, harnesses, routing)

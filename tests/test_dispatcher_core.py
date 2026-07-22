@@ -4,6 +4,7 @@ from actionq_dispatcher.config import (
     ActionConfig,
     DispatcherConfig,
     GlobalConfig,
+    HarnessConfig,
     ProjectConfig,
 )
 from actionq_dispatcher.core import Dispatcher
@@ -111,3 +112,30 @@ def test_unknown_action_type_rejected(tmp_path):
     result = Dispatcher(_config(tmp_path), actionctl=actionctl, sprintctl_factory=lambda _p: None, worker=None).run_once()
     assert result.result == "rejected"
     assert actionctl.rejections[0][2] == "action-type-config"
+
+
+def test_one_shot_rejects_codex_route_instead_of_running_claude(tmp_path):
+    config = _config(tmp_path)
+    config.harnesses["codex"] = HarnessConfig(
+        name="codex", bin="codex", kind="codex", default_model="gpt-sol"
+    )
+    actionctl = FakeActionctl(
+        action={
+            "id": 10,
+            "action_type": "scope-iterate",
+            "project": "demo",
+            "harness": "codex",
+            "model": "gpt-sol",
+        }
+    )
+
+    result = Dispatcher(
+        config,
+        actionctl=actionctl,
+        sprintctl_factory=lambda _p: None,
+        worker=None,
+    ).run_once()
+
+    assert result.result == "rejected"
+    assert actionctl.rejections[0][2] == "one-shot-harness-unsupported"
+    assert "actionq-daemon" in actionctl.rejections[0][1]

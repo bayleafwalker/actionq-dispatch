@@ -648,7 +648,21 @@ class ActionqDaemon:
                 "session.dispatch",
                 action_id=action_id,
                 actor=self.actor,
-                payload=session.dispatch_payload(routing_source=routing.routing_source),
+                payload=session.dispatch_payload(
+                    routing_source=routing.routing_source,
+                    routing={
+                        "requested_selector": routing.requested_selector,
+                        "trusted_caller_harness": routing.caller_harness,
+                        "resolved_harness": routing.harness,
+                        "resolved_provider": routing.provider,
+                        "resolved_model": routing.model,
+                        "transport": routing.transport,
+                        "surface": routing.surface,
+                        "routing_source": routing.routing_source,
+                        "fallback_model": routing.fallback_model,
+                        "fallback_reason": routing.fallback_reason,
+                    },
+                ),
             )
         except Exception as exc:
             log.warning("failed to emit session.dispatch: %s", exc)

@@ -49,8 +49,8 @@ class SessionRecord:
     def to_dict(self) -> dict:
         return asdict(self)
 
-    def dispatch_payload(self, routing_source: str = "action-kind-default") -> dict:
-        return {
+    def dispatch_payload(self, routing_source: str = "action-kind-default", routing: dict | None = None) -> dict:
+        payload = {
             "session_id": self.session_id,
             "runtime_session_id": self.runtime_session_id or self.session_id,
             "daemon_id": self.daemon_id,
@@ -70,6 +70,9 @@ class SessionRecord:
                 "claim_type": self.claim_type,
             },
         }
+        if routing:
+            payload["routing"] = routing
+        return payload
 
     def started_payload(self) -> dict:
         return {

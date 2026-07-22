@@ -1,6 +1,7 @@
 """Tests for harness routing resolution (step 5)."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -11,8 +12,9 @@ from actionq_dispatcher.config import (
     GlobalConfig,
     HarnessConfig,
     ProjectConfig,
+    RoutingConfig,
 )
-from actionq_dispatcher.routing import RoutingError, resolve_routing
+from actionq_dispatcher.routing import RoutingError, resolve_routing, same_provider_fallback
 
 
 def _global_config(tmp_path: Path) -> GlobalConfig:
@@ -82,6 +84,115 @@ def _config(
         actions={"scope-iterate": ac},
         harnesses=harnesses or {},
     )
+
+
+def _caller_policy(tmp_path: Path) -> Path:
+    path = tmp_path / "model-routing.json"
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "caller_harness_providers": {"claude": "anthropic", "codex": "codex", "kimi": "kimi"},
+        "aliases": {
+            "fast-build": {
+                "anthropic": {"model": "claude-haiku", "verified": True},
+                "codex": {
+                    "model": "gpt-spark", "fallback": "gpt-luna", "verified": True,
+                    "transport": "chatgpt", "surfaces": ["codex-cli"],
+                },
+            },
+            "codex-only": {"codex": {"model": "gpt-sol", "verified": True}},
+        },
+    }), encoding="utf-8")
+    return path
+
+
+def _caller_config(tmp_path: Path, caller: str | None, *, transport="chatgpt", surface="codex-cli") -> DispatcherConfig:
+    config = _config(
+        tmp_path,
+        harnesses={
+            "claude": HarnessConfig("claude", "claude", "claude", ""),
+            "codex": HarnessConfig("codex", "codex", "codex", ""),
+        },
+        project_config=_project_config(tmp_path / "repo", default_harness="caller"),
+        action_config=_action_config(model="fast-build"),
+    )
+    config.routing = RoutingConfig(
+        policy_path=_caller_policy(tmp_path), default_harness="caller",
+        trusted_caller_harness=caller, caller_transport=transport, caller_surface=surface,
+    )
+    return config
+
+
+def test_caller_mode_resolves_claude_provider_branch(tmp_path):
+    config = _caller_config(tmp_path, "claude")
+    result = resolve_routing({}, config.actions["scope-iterate"], config.projects["myproject"], config)
+    assert (result.harness, result.provider, result.model) == ("claude", "anthropic", "claude-haiku")
+    assert result.routing_source == "caller-inheritance"
+
+
+def test_caller_mode_resolves_codex_spark_with_provenance(tmp_path):
+    config = _caller_config(tmp_path, "codex")
+    result = resolve_routing({}, config.actions["scope-iterate"], config.projects["myproject"], config)
+    assert (result.harness, result.provider, result.model) == ("codex", "codex", "gpt-spark")
+    assert result.fallback_model == "gpt-luna"
+    assert result.transport == "chatgpt"
+    assert result.surface == "codex-cli"
+
+
+def test_explicit_harness_override_wins_caller_mode(tmp_path):
+    config = _caller_config(tmp_path, "codex")
+    result = resolve_routing(
+        {"harness": "claude", "model": "fast-build"},
+        config.actions["scope-iterate"], config.projects["myproject"], config,
+    )
+    assert (result.harness, result.provider, result.model) == ("claude", "anthropic", "claude-haiku")
+    assert result.routing_source == "action-explicit"
+
+
+def test_explicit_harness_uses_its_configured_transport(tmp_path):
+    config = _caller_config(tmp_path, "claude", transport="anthropic-cli", surface="claude-code")
+    config.harnesses["codex"].transport = "chatgpt"
+    config.harnesses["codex"].surface = "codex-cli"
+    result = resolve_routing(
+        {"harness": "codex", "model": "fast-build"},
+        config.actions["scope-iterate"], config.projects["myproject"], config,
+    )
+    assert result.model == "gpt-spark"
+    assert result.fallback_reason is None
+
+
+def test_caller_mode_without_trusted_identity_fails_with_multiple_harnesses(tmp_path):
+    config = _caller_config(tmp_path, None)
+    with pytest.raises(RoutingError, match="trusted_caller_harness"):
+        resolve_routing({}, config.actions["scope-iterate"], config.projects["myproject"], config)
+
+
+def test_unsupported_kimi_provider_branch_fails_closed(tmp_path):
+    config = _caller_config(tmp_path, "kimi")
+    with pytest.raises(RoutingError, match="no verified provider branch"):
+        resolve_routing({}, config.actions["scope-iterate"], config.projects["myproject"], config)
+
+
+def test_spark_transport_incompatibility_selects_same_provider_luna(tmp_path):
+    config = _caller_config(tmp_path, "codex", transport="api", surface="api-worker")
+    result = resolve_routing({}, config.actions["scope-iterate"], config.projects["myproject"], config)
+    assert result.model == "gpt-luna"
+    assert result.provider == "codex"
+    assert result.fallback_reason == "transport-incompatible"
+
+
+def test_spark_usage_limit_redispatch_stays_on_codex(tmp_path):
+    config = _caller_config(tmp_path, "codex")
+    primary = resolve_routing({}, config.actions["scope-iterate"], config.projects["myproject"], config)
+    fallback = same_provider_fallback(primary, reason="confirmed Spark usage limit")
+    assert (fallback.harness, fallback.provider, fallback.model) == ("codex", "codex", "gpt-luna")
+    assert fallback.fallback_reason == "confirmed Spark usage limit"
+
+
+def test_no_implicit_cross_provider_fallback(tmp_path):
+    config = _caller_config(tmp_path, "claude")
+    config.actions["scope-iterate"].model = "codex-only"
+    with pytest.raises(RoutingError, match="no verified provider branch"):
+        resolve_routing({}, config.actions["scope-iterate"], config.projects["myproject"], config)
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +320,7 @@ def test_action_kind_default_used_when_no_project_default(tmp_path):
     result = resolve_routing(action, config.actions["scope-iterate"], config.projects["myproject"], config)
     assert result.harness == "claude"
     assert result.model == "sonnet"
-    assert result.routing_source == "action-kind-default"
+    assert result.routing_source == "runner-compatibility"
 
 
 def test_action_kind_default_uses_action_reasoning(tmp_path):
@@ -230,7 +341,7 @@ def test_runner_local_maps_to_claude(tmp_path):
     action = {"id": 1, "action_type": "scope-iterate", "project": "myproject", "target_ref": "1"}
     result = resolve_routing(action, config.actions["scope-iterate"], None, config)
     assert result.harness == "claude"
-    assert result.routing_source == "action-kind-default"
+    assert result.routing_source == "runner-compatibility"
 
 
 def test_runner_fake_maps_to_fake(tmp_path):
@@ -238,7 +349,7 @@ def test_runner_fake_maps_to_fake(tmp_path):
     action = {"id": 1, "action_type": "scope-iterate", "project": "myproject", "target_ref": "1"}
     result = resolve_routing(action, config.actions["scope-iterate"], None, config)
     assert result.harness == "fake"
-    assert result.routing_source == "action-kind-default"
+    assert result.routing_source == "runner-compatibility"
 
 
 def test_explicit_default_harness_on_action_config(tmp_path):
@@ -250,7 +361,7 @@ def test_explicit_default_harness_on_action_config(tmp_path):
     result = resolve_routing(action, config.actions["scope-iterate"], None, config)
     assert result.harness == "codex"
     assert result.model == "codex-model"
-    assert result.routing_source == "action-kind-default"
+    assert result.routing_source == "action-class-override"
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +439,7 @@ def test_priority_action_explicit_beats_project_default(tmp_path):
     assert result.routing_source == "action-explicit"
 
 
-def test_priority_project_default_beats_action_kind_default(tmp_path):
+def test_priority_action_class_override_beats_project_default(tmp_path):
     config = _config(
         tmp_path,
         project_config=_project_config(tmp_path / "repo", default_harness="project-h", default_model="project-m"),
@@ -336,8 +447,8 @@ def test_priority_project_default_beats_action_kind_default(tmp_path):
     )
     action = {"id": 1, "action_type": "scope-iterate", "project": "myproject", "target_ref": "1"}
     result = resolve_routing(action, config.actions["scope-iterate"], config.projects["myproject"], config)
-    assert result.harness == "project-h"
-    assert result.routing_source == "project-default"
+    assert result.harness == "action-kind-h"
+    assert result.routing_source == "action-class-override"
 
 
 # ---------------------------------------------------------------------------

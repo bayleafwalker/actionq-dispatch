@@ -315,11 +315,12 @@ def test_codex_start_builds_command(tmp_path):
 
     cmd = captured["cmd"]
     assert cmd[0] == "codex"
-    assert "--approval-mode" in cmd
-    assert cmd[cmd.index("--approval-mode") + 1] == "full-auto"
+    assert cmd[1:6] == ["exec", "--skip-git-repo-check", "--json", "--sandbox", "workspace-write"]
+    assert cmd[cmd.index("-C") + 1] == str(worktree)
     assert "--model" in cmd
     assert cmd[cmd.index("--model") + 1] == "gpt-4o"
-    assert cmd[-1] == "fix the tests"
+    assert cmd[-1] == "-"
+    assert captured["prompt"] == "fix the tests"
 
 
 def test_codex_start_ignores_unverified_reasoning_override(tmp_path):
@@ -341,7 +342,7 @@ def test_codex_start_ignores_unverified_reasoning_override(tmp_path):
     assert "-c" not in captured["cmd"]
 
 
-def test_codex_start_passes_prompt_as_positional_arg(tmp_path):
+def test_codex_start_passes_prompt_on_stdin(tmp_path):
     worktree = tmp_path / "wt"
     worktree.mkdir()
     captured = {}
@@ -355,9 +356,8 @@ def test_codex_start_passes_prompt_as_positional_arg(tmp_path):
     adapter = CodexAdapter(bin="codex", worker_env=None)
     adapter.start(_action_config(), _prepared(worktree, prompt="refactor auth"), fake_factory)
 
-    # Prompt is the last positional arg, NOT passed via stdin.
-    assert captured["cmd"][-1] == "refactor auth"
-    assert captured["prompt"] is None
+    assert captured["cmd"][-1] == "-"
+    assert captured["prompt"] == "refactor auth"
 
 
 def test_codex_start_uses_worktree_as_cwd(tmp_path):

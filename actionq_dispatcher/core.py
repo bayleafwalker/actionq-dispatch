@@ -5,7 +5,7 @@ import shlex
 import socket
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Protocol
@@ -14,6 +14,7 @@ from .acl import ACL, load_acl, validate_changed_paths
 from .clients import ActionctlClient, ClientError, SprintctlClient
 from .commands import CommandRunner, git_safe_env
 from .config import ActionConfig, DispatcherConfig, ProjectConfig
+from .routing import RoutingError, resolve_routing
 from .worker import ConfiguredWorker, WorkerError
 
 
@@ -173,6 +174,28 @@ class Dispatcher:
             return DispatchResult(0, "rejected", action_id)
 
         action_config = self.config.actions[action_type]
+        project_config = self.config.projects.get(str(action.get("project") or ""))
+        try:
+            routing = resolve_routing(action, action_config, project_config, self.config)
+        except RoutingError as exc:
+            self.actionctl.reject(action_id, str(exc), "harness-routing", self.actor)
+            self._emit_cycle(started, claimed=True, action_id=action_id, result="rejected")
+            return DispatchResult(0, "rejected", action_id)
+        if action_config.runner == "local" and routing.harness != "claude":
+            self.actionctl.reject(
+                action_id,
+                "one-shot dispatcher supports only the Claude local worker; "
+                f"use actionq-daemon for routed harness {routing.harness!r}",
+                "one-shot-harness-unsupported",
+                self.actor,
+            )
+            self._emit_cycle(started, claimed=True, action_id=action_id, result="rejected")
+            return DispatchResult(0, "rejected", action_id)
+        action_config = replace(
+            action_config,
+            model=routing.model,
+            reasoning=routing.reasoning,
+        )
         handler = ScopeIterateHandler(
             self.config,
             self.runner,

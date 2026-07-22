@@ -108,6 +108,14 @@ class FakeCommitWorker:
 
 
 class ConfiguredWorker:
+    """Legacy one-shot worker.
+
+    ``Dispatcher.run_once`` resolves routing before invoking this class and
+    rejects non-Claude local routes. Multi-harness execution belongs to the
+    long-running daemon's adapter registry; this worker must never silently
+    reinterpret a Codex/OpenCode route as Claude.
+    """
+
     def __init__(self, global_config: GlobalConfig, runner: CommandRunner):
         self.claude = ClaudeWorker(global_config, runner)
         self.fake = FakeCommitWorker(runner)

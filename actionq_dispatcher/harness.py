@@ -70,7 +70,7 @@ class ClaudeAdapter:
 
 @dataclass
 class CodexAdapter:
-    """Launches OpenAI Codex CLI in full-auto (non-interactive) mode."""
+    """Launches current Codex CLI non-interactively with prompt on stdin."""
 
     bin: str
     worker_env: dict[str, str] | None
@@ -83,14 +83,19 @@ class CodexAdapter:
     ) -> ProcessLike:
         cmd = [
             self.bin,
-            "--approval-mode",
-            "full-auto",
+            "exec",
+            "--skip-git-repo-check",
+            "--json",
+            "--sandbox",
+            "workspace-write",
+            "-C",
+            str(prepared.worktree),
             "--model",
             action_config.model,
-            prepared.prompt,
+            "-",
         ]
         env = git_safe_env(prepared.worktree, self.worker_env)
-        return process_factory(cmd, prepared.worktree, env, None)
+        return process_factory(cmd, prepared.worktree, env, prepared.prompt)
 
 
 @dataclass
