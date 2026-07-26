@@ -1,27 +1,40 @@
 from __future__ import annotations
 
-import json
+import os
+import shutil
 
 import click
 
 from . import __version__
-from .commands import CommandRunner
-from .config import ConfigError, load_config
-from .core import CoordinatorError, Dispatcher
 
 
 @click.command()
 @click.option("--config", "config_path", default=None, help="Dispatcher config path")
+@click.option(
+    "--actionq-daemon",
+    "daemon_bin",
+    default=None,
+    help="Canonical actionq-daemon executable (defaults to ACTIONQ_DAEMON_BIN or PATH)",
+)
 @click.version_option(__version__, prog_name="dispatcher-once")
-def cli(config_path: str | None) -> None:
-    """Run one deterministic dispatcher cycle."""
-    try:
-        config = load_config(config_path)
-        result = Dispatcher(config, runner=CommandRunner()).run_once()
-    except ConfigError as exc:
-        raise click.ClickException(str(exc)) from exc
-    except CoordinatorError as exc:
-        raise click.ClickException(str(exc)) from exc
+def cli(config_path: str | None, daemon_bin: str | None) -> None:
+    """Run one cycle through ActionQ's canonical receipt-fenced daemon."""
+    executable = daemon_bin or os.environ.get("ACTIONQ_DAEMON_BIN") or "actionq-daemon"
+    resolved = shutil.which(executable)
+    if resolved is None:
+        raise click.ClickException(
+            f"canonical ActionQ daemon not found: {executable!r}; "
+            "install actionq and ensure actionq-daemon is on PATH"
+        )
 
-    click.echo(json.dumps({"result": result.result, "action_id": result.action_id}))
-    raise click.exceptions.Exit(result.exit_code)
+    command = [resolved]
+    if config_path is not None:
+        command.extend(["--config", config_path])
+    command.append("--once")
+
+    try:
+        os.execv(resolved, command)
+    except OSError as exc:
+        raise click.ClickException(
+            f"failed to execute canonical ActionQ daemon: {exc}"
+        ) from exc

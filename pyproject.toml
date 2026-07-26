@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "actionq-dispatcher"
 version = "0.1.1"
-description = "Deterministic one-action-at-a-time coordinator for actionq"
+description = "Compatibility launcher for ActionQ's canonical dispatcher"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "bayleafwalker" }]

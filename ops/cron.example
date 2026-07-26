@@ -1,5 +1,0 @@
-# Backstop dispatcher cycle every 15 minutes.
-*/15 * * * * DISPATCHER_CONFIG=$HOME/.config/actionq-dispatcher/config.toml dispatcher-once
-
-# Return timed-out claims to pending every 5 minutes.
-*/5 * * * * actionctl sweep
