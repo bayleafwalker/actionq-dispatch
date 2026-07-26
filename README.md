@@ -1,5 +1,9 @@
 # actionq-dispatcher
 
+`actionq-daemon` is owned and published by the `actionq` package. This
+package retains only the bounded `dispatcher-once` compatibility coordinator;
+do not install it as a long-running daemon.
+
 Deterministic one-action-at-a-time coordinator for actionq.
 
 `dispatcher-once` claims at most one action, prepares a scoped worktree, invokes a worker, validates the resulting artifact, and records the outcome through `actionctl`.
