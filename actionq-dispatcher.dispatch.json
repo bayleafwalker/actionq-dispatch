@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "repo_id": "actionq-dispatcher",
+  "adoption_level": "guidance-only",
+  "routing": {
+    "default_harness": "codex",
+    "default_model_alias": "fast-build",
+    "action_classes": {
+      "plan": { "enabled": true, "model_alias": "frontier-plan" },
+      "build": { "enabled": true, "model_alias": "fast-build", "review_required": true },
+      "review": { "enabled": true, "model_alias": "review-synthesis" },
+      "verify": { "enabled": true, "model_alias": "review-synthesis", "review_required": true },
+      "reconcile": { "enabled": true, "model_alias": "review-synthesis" }
+    }
+  },
+  "skills": {
+    "template_root": "/projects/dev/agentops/templates/dispatch/skills",
+    "selected": [
+      "dispatch-plan",
+      "dispatch-build",
+      "dispatch-review",
+      "code-change-verification",
+      "reconcile-project-contracts"
+    ]
+  },
+  "scope": {
+    "allowed_path_roots": ["actionq_dispatcher/", "tests/", "docs/", "README.md", "pyproject.toml", ".agents/"],
+    "out_of_scope": ["ActionQ queue, receipt, Sprintctl-claim, worktree, and settlement behavior owned by ../actionq"]
+  },
+  "verification": {
+    "command_families": ["unit", "docs"],
+    "targeted_first": true,
+    "commands": [
+      "uv run --extra dev pytest tests/ -q",
+      "python /projects/dev/agentops/templates/dispatch/scripts/validate_verification_artifacts.py --root ."
+    ]
+  },
+  "hooks": {
+    "level": "verification",
+    "publishers": ["git", "dispatcher-gate"]
+  }
+}
