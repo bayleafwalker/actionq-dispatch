@@ -36,7 +36,3 @@ TOML, not an invitation to add workflow semantics to the queue.
 ```bash
 uv run --extra dev pytest tests/ -q
 ```
-
-<!-- agentops-environment-pointer:start -->
-See `.agents/environment.generated.md` for the active Vuoro environment's constraints and runbooks (agentops-managed; do not hand-edit).
-<!-- agentops-environment-pointer:end -->
