@@ -2,6 +2,12 @@
 
 > Shared environment guidance lives in `/projects/dev/AGENTS.md`.
 
+**Status: deprecated compatibility shim.** `actionq-dispatcher` is retained
+only as a transparent launcher for the historical `dispatcher-once` command.
+See `docs/ecosystem.md` in `agentops` for the ecosystem-wide description of
+this status. Do not add new behavior here; new dispatch work belongs in
+`../actionq`.
+
 ## Ownership
 
 `actionq-dispatcher` is a compatibility launcher for callers of the historical
