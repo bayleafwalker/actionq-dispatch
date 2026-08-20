@@ -1,28 +1,47 @@
-# `dispatcher-once` compatibility runbook
+# `dispatcher-once` retirement runbook
 
-Use `dispatcher-once` only for a bounded manual/debug cycle required by a
-legacy caller. It delegates to the installed ActionQ daemon with `--once`.
+`dispatcher-once` no longer runs work. ActionQ 0.1.26 removed the execution
+plane that version 0.1.2 delegated to. The 0.2.0 command is a fail-fast
+tombstone for replacing stale installed launchers safely.
 
-Before any queue-backed run:
+## Operator migration
 
-1. install the intended immutable ActionQ artifact;
-2. validate `actionctl check-compatibility`;
-3. use an ActionQ-owned config with an explicit project, sprint, harness,
-   scope-iterate policy, path ACL, and test command;
-4. keep the ActionQ pause file present until the disposable fake-worker and
-   provider-backed gates have produced reviewable artifacts.
+1. Stop and disable every systemd, cron, tmux, or manual loop that invokes
+   `dispatcher-once` or the removed `actionq-daemon`. This is an external,
+   operator-owned action; this repository does not mutate hosts.
+2. Upgrade installed `actionq-dispatcher` tools to 0.2.0. Confirm invoking the
+   command returns the retirement message and a nonzero status without creating
+   a child process.
+3. Remove `actionq-dispatcher` from host package/update lists, then uninstall
+   the tool. Removing the package before callers are stopped can leave a stale
+   or confusing command path.
+4. Route future execution through the selected product-native runtime and the
+   Vuoro federation boundary. There is no replacement queue-worker CLI.
 
-Run one cycle:
+## Known consumers requiring separate changes
 
-```bash
-dispatcher-once --config ~/.config/actionq/config.toml
-```
+- `/projects/dev/AGENTS.md` still names the installed launcher in legacy-pod
+  recovery guidance;
+- `gitops-nixos/modules/system/actionq-dispatch.nix` installs the package and
+  defines `actionq-dispatch.service`, while
+  `gitops-nixos/scripts/update-agentops-tools.sh` refreshes the tool;
+- `agentops/project.toml`, `agentops/docs/ecosystem.md`, and related runbooks
+  still register or describe the compatibility launcher;
+- `q-spec/dispatcher-spec.md` still specifies daemon, cron, and manual
+  `dispatcher-once` modes;
+- appservice preflight documentation detects compatibility invocations.
 
-For continuous execution, follow the ActionQ daemon runbook and start
-`actionq-daemon` directly in a named `tmux` session. This compatibility package
-does not own daemon scheduling, queue mutation, worktrees, or cleanup.
+Those repositories own their migration changes. This PR does not deploy,
+disable services, edit host configuration, or alter cluster state.
 
-Legacy configuration under `~/.config/actionq-dispatcher/config.toml` may still
-be found by ActionQ when no explicit path is supplied, but it must already use
-the current ActionQ schema. This package deliberately performs no lossy config
-translation.
+Historical implementation evidence remains in Git and in the
+`actionq-dispatcher-v0.1.2` tag. Do not delete or rewrite that history.
+
+## Repository surface at retirement
+
+The sole published console script is `dispatcher-once`. The Python package has
+only `actionq_dispatcher.__version__` and the tombstone CLI module; it contains
+no queue client, configuration loader, worker, daemon, or process adapter. The
+latest pre-retirement release is GitHub release/tag
+`actionq-dispatcher-v0.1.2`. Tests are repository-only falsification gates and
+are not wheel package data.
