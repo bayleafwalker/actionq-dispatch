@@ -24,19 +24,21 @@
     ]
   },
   "scope": {
-    "allowed_path_roots": ["actionq_dispatcher/", "tests/", "docs/", "README.md", "pyproject.toml", ".agents/"],
-    "out_of_scope": ["ActionQ queue, receipt, Sprintctl-claim, worktree, and settlement behavior owned by ../actionq"]
+    "allowed_path_roots": ["AGENTS.md", "actionq-dispatcher.dispatch.json", "actionq_dispatcher/", "tests/", "docs/", "README.md", "pyproject.toml", "uv.lock", ".agents/"],
+    "out_of_scope": ["External service retirement, host package removal, deployment, and all ActionQ queue or execution behavior"]
   },
   "verification": {
     "command_families": ["unit", "docs"],
     "targeted_first": true,
     "commands": [
       "uv run --extra dev pytest tests/ -q",
+      "uv build --wheel --out-dir <temporary-directory>",
+      "<temporary-venv>/bin/dispatcher-once --config /tmp/retired.toml",
       "python /projects/dev/agentops/templates/dispatch/scripts/validate_verification_artifacts.py --root ."
     ]
   },
   "hooks": {
     "level": "verification",
-    "publishers": ["git", "dispatcher-gate"]
+    "publishers": ["git"]
   }
 }

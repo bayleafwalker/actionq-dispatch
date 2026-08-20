@@ -2,19 +2,17 @@
 
 > Shared environment guidance lives in `/projects/dev/AGENTS.md`.
 
-**Status: deprecated compatibility shim.** `actionq-dispatcher` is retained
-only as a transparent launcher for the historical `dispatcher-once` command.
-See `docs/ecosystem.md` in `agentops` for the ecosystem-wide description of
-this status. Do not add new behavior here; new dispatch work belongs in
-`../actionq`.
+**Status: retired tombstone.** ActionQ 0.1.26 removed the execution plane that
+the historical `dispatcher-once` command launched. Version 0.2.0 retains only
+a deterministic fail-fast command so upgrades replace stale executable shims
+with an actionable retirement message. Do not add dispatch behavior here.
 
 ## Ownership
 
-`actionq-dispatcher` is a compatibility launcher for callers of the historical
-`dispatcher-once` command. The command delegates one bounded cycle to
-ActionQ's canonical daemon. `../actionq` owns queue claims and receipts,
-worktree preparation, configured gates, tool ACL enforcement, harness
-invocation, cost/budget checks, Sprintctl claim coordination, and settlement.
+`actionq-dispatcher` owns no runtime behavior. The tombstone must not resolve,
+spawn, or replace a process; inspect configuration; access ActionQ or
+Sprintctl; or imply that a queue worker remains available. Product-native
+runtimes integrate through the Vuoro federation boundary.
 
 The queue contract lives in `../q-spec/actionq-spec.md`; the coordinator
 contract lives in `../q-spec/dispatcher-spec.md`. Configuration is policy in
@@ -22,20 +20,20 @@ TOML, not an invitation to add workflow semantics to the queue.
 
 ## Working Rules
 
-- Keep `dispatcher-once` a transparent `actionq-daemon --once` launcher.
+- Keep `dispatcher-once` a deterministic nonzero retirement tombstone.
 - Do not add queue clients, claim tokens, Sprintctl mutations, worktree
   preparation, policy translation, harness logic, or settlement to this
   package.
-- Preserve the child process exit code and argument boundaries.
-- Do not infer or rewrite legacy configuration. ActionQ validates its own
-  configuration and safety policy.
+- Retain the old option names only so existing callers get the retirement
+  message instead of an option-parser error.
+- Preserve historical evidence in Git; do not recreate deleted behavior.
 
 ## Daemon And Mutation Safety
 
-- This package does not publish or start `actionq-daemon`.
-- Long-running operation, disposable gates, cleanup, claim-token handling, and
-  mutation safety are governed by `../actionq/AGENTS.md`.
-- Do not schedule `dispatcher-once` as a daemon substitute.
+- This package must not publish, resolve, or start `actionq-daemon`.
+- Do not install or schedule `dispatcher-once` as a daemon substitute.
+- Disabling external services and removing installed tools are operator-owned
+  rollout actions outside this repository.
 
 ## Validation
 

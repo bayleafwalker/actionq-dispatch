@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "actionq-dispatcher"
-version = "0.1.2"
-description = "Compatibility launcher for ActionQ's canonical dispatcher"
+version = "0.2.0"
+description = "Retirement tombstone for the historical dispatcher-once command"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "bayleafwalker" }]
-keywords = ["actionq", "automation", "cli", "dispatcher", "git-worktree"]
+keywords = ["actionq", "cli", "dispatcher", "retired"]
 classifiers = [
-	"Development Status :: 3 - Alpha",
+	"Development Status :: 7 - Inactive",
 	"Environment :: Console",
 	"Intended Audience :: Developers",
 	"Programming Language :: Python :: 3",
