@@ -14,7 +14,7 @@
     }
   },
   "skills": {
-    "template_root": "/projects/dev/agentops/templates/dispatch/skills",
+    "template_root": "/projects/dev/agentops/skills",
     "selected": [
       "dispatch-plan",
       "dispatch-build",
@@ -34,7 +34,7 @@
       "uv run --extra dev pytest tests/ -q",
       "uv build --wheel --out-dir <temporary-directory>",
       "<temporary-venv>/bin/dispatcher-once --config /tmp/retired.toml",
-      "python /projects/dev/agentops/templates/dispatch/scripts/validate_verification_artifacts.py --root ."
+      "python /projects/dev/agentops/scripts/validate_verification_artifacts.py --root ."
     ]
   },
   "hooks": {
