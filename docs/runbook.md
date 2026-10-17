@@ -27,8 +27,9 @@ tombstone for replacing stale installed launchers safely.
   `gitops-nixos/scripts/update-agentops-tools.sh` refreshes the tool;
 - `agentops/project.toml`, `agentops/docs/ecosystem.md`, and related runbooks
   still register or describe the compatibility launcher;
-- `q-spec/dispatcher-spec.md` still specifies daemon, cron, and manual
-  `dispatcher-once` modes;
+- the q-spec review bundle is not present in this checkout and has no public
+  owner repository; its current caller guidance and publication disposition
+  require an owner decision before they can be verified;
 - appservice preflight documentation detects compatibility invocations.
 
 Those repositories own their migration changes. This PR does not deploy,

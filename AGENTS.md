@@ -14,9 +14,13 @@ spawn, or replace a process; inspect configuration; access ActionQ or
 Sprintctl; or imply that a queue worker remains available. Product-native
 runtimes integrate through the Vuoro federation boundary.
 
-The queue contract lives in `../q-spec/actionq-spec.md`; the coordinator
-contract lives in `../q-spec/dispatcher-spec.md`. Configuration is policy in
-TOML, not an invitation to add workflow semantics to the queue.
+The queue and coordinator contracts were maintained separately as q-spec.
+The [AgentOps 2026-08-20 closure report](https://github.com/bayleafwalker/agentops/blob/main/docs/assessments/corrected-native-runtime-federation-program-closure-2026-08-20.md)
+records that no public q-spec repository exists and that the reviewed bundle
+is host-persistent; that source is not available in this checkout. Its purpose
+and publication disposition remain unresolved. Do not make this tombstone
+depend on q-spec or infer its closure from its absence. Configuration is policy
+in TOML, not an invitation to add workflow semantics to the queue.
 
 ## Working Rules
 
